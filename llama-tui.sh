@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  llama-tui.sh - Lançador TUI para o llama-server (llama.cpp)
+#  llama-tui.sh - TUI launcher for llama-server (llama.cpp)
 #
-#  Uso rápido:
-#    ./llama-tui.sh                 abre a interface (TUI)
-#    ./llama-tui.sh run   <perfil>  roda o servidor em primeiro plano (Ctrl+C para)
-#    ./llama-tui.sh start <perfil>  inicia em segundo plano
-#    ./llama-tui.sh stop            para o servidor em execução
-#    ./llama-tui.sh help            ajuda completa
+#  Quick usage:
+#    ./llama-tui.sh                  open the interface (TUI)
+#    ./llama-tui.sh run   <profile>  run the server in the foreground (Ctrl+C stops)
+#    ./llama-tui.sh start <profile>  start in the background
+#    ./llama-tui.sh stop             stop the running server
+#    ./llama-tui.sh help             full help
 #
-#  Compatível com bash 3.2 (macOS) e Linux. A TUI requer "dialog".
+#  Works with bash 3.2 (macOS) and Linux. The TUI requires "dialog".
 # =============================================================================
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 PROG="$(basename "$0")"
 
 # ----------------------------------------------------------------------------
-# Diretórios (seguem o padrão XDG; podem ser sobrescritos por variáveis de ambiente)
+# Directories (follow XDG; can be overridden with environment variables)
 # ----------------------------------------------------------------------------
 CONFIG_DIR="${LLAMA_TUI_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/llama-tui}"
 STATE_DIR="${LLAMA_TUI_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/llama-tui}"
@@ -27,16 +27,16 @@ LAST_FILE="$CONFIG_DIR/last-session.conf"
 PID_FILE="$STATE_DIR/server.pid"
 RUNINFO_FILE="$STATE_DIR/server.info"
 APP_LOG="$LOG_DIR/llama-tui.log"
-APP_LOG_MAX_BYTES=$((5 * 1024 * 1024))   # acima disso o log é arquivado (nunca apagado)
+APP_LOG_MAX_BYTES=$((5 * 1024 * 1024))   # above this the log is archived (never deleted)
 
 mkdir -p "$PROFILE_DIR" "$LOG_DIR" 2>/dev/null || {
-    echo "ERRO: não foi possível criar $PROFILE_DIR ou $LOG_DIR" >&2
+    echo "ERROR: could not create $PROFILE_DIR or $LOG_DIR" >&2
     exit 1
 }
 chmod 700 "$CONFIG_DIR" 2>/dev/null
 
 # ----------------------------------------------------------------------------
-# Log do programa: sempre em modo append; rotação por renomeação com data/hora
+# Application log: always appended; rotated by renaming with a timestamp
 # ----------------------------------------------------------------------------
 rotate_app_log() {
     [ -f "$APP_LOG" ] || return 0
@@ -47,7 +47,7 @@ rotate_app_log() {
     fi
 }
 
-log() {  # log NIVEL mensagem...
+log() {  # log LEVEL message...
     local level="$1"; shift
     printf '%s [%-5s] [pid %s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$level" "$$" "$*" >>"$APP_LOG"
 }
@@ -58,10 +58,10 @@ log_error() { log ERROR "$@"; }
 rotate_app_log
 
 # ----------------------------------------------------------------------------
-# Definição dos parâmetros
-#   Cada parâmetro: chave | tipo | flag do llama-server | rótulo | ajuda curta | documentação
-#   Tipos: text, int, float, bool, choice:<op1>,<op2>,...
-#   Valor vazio = parâmetro NÃO é passado (o llama-server usa o padrão dele)
+# Parameter definitions
+#   Each parameter: key | type | llama-server flag | label | short help | documentation
+#   Types: text, int, float, bool, choice:<opt1>,<opt2>,...
+#   Empty value = the parameter is NOT passed (llama-server uses its own default)
 # ----------------------------------------------------------------------------
 P_KEYS=();  P_TYPE=(); P_FLAG=(); P_LABEL=(); P_SHORT=(); P_DOC=()
 
@@ -69,227 +69,226 @@ defparam() {
     P_KEYS+=("$1"); P_TYPE+=("$2"); P_FLAG+=("$3"); P_LABEL+=("$4"); P_SHORT+=("$5"); P_DOC+=("$6")
 }
 
-defparam PORT int "--port" "Porta" \
- "Porta TCP do servidor (ex.: 8080)." \
-"Porta TCP em que o servidor escuta (--port).
+defparam PORT int "--port" "Port" \
+ "Server TCP port (e.g. 8080)." \
+"TCP port the server listens on (--port).
 
-Depois de iniciado, acesse http://<ip>:<porta> no navegador para a
-interface web, ou use http://<ip>:<porta>/v1 como endpoint compatível
-com a API da OpenAI.
+Once started, open http://<ip>:<port> in a browser for the web UI,
+or use http://<ip>:<port>/v1 as an OpenAI-compatible API endpoint.
 
-A porta precisa estar livre. Portas abaixo de 1024 exigem root.
-Padrão do llama-server: 8080"
+The port must be free. Ports below 1024 require root.
+llama-server default: 8080"
 
-defparam CTX int "-c" "Contexto (tokens)" \
- "Tamanho da janela de contexto em tokens (-c / --ctx-size)." \
-"Tamanho máximo do contexto em tokens (-c / --ctx-size).
+defparam CTX int "-c" "Context (tokens)" \
+ "Context window size in tokens (-c / --ctx-size)." \
+"Maximum context size in tokens (-c / --ctx-size).
 
-É quanto texto (prompt + resposta + histórico) o modelo consegue
-\"lembrar\" de uma vez. Valores maiores usam MUITO mais memória
-(RAM/VRAM) por causa do KV cache.
+This is how much text (prompt + reply + history) the model can
+\"remember\" at once. Larger values use MUCH more memory
+(RAM/VRAM) because of the KV cache.
 
-Exemplos: 4096, 8192, 16384, 32768.
-0 = usa o valor de treino do modelo (pode ser enorme!).
-Com --parallel N, o contexto é dividido entre os N slots."
+Examples: 4096, 8192, 16384, 32768.
+0 = use the model's training value (can be huge!).
+With --parallel N, the context is split across the N slots."
 
-defparam NGL int "-ngl" "Camadas na GPU" \
- "Quantas camadas do modelo vão para a GPU (-ngl). 99 = todas." \
-"Número de camadas do modelo carregadas na GPU (-ngl / --n-gpu-layers).
+defparam NGL int "-ngl" "GPU layers" \
+ "How many model layers go to the GPU (-ngl). 99 = all." \
+"Number of model layers loaded on the GPU (-ngl / --n-gpu-layers).
 
-  99 (ou maior que o nº de camadas) -> tudo na GPU (mais rápido).
-  0  -> tudo na CPU.
-  Valor intermediário -> divide entre GPU e CPU quando o modelo
-  não cabe inteiro na VRAM.
+  99 (or more than the layer count) -> everything on the GPU (fastest).
+  0  -> everything on the CPU.
+  In between -> split between GPU and CPU when the model does not
+  fit entirely in VRAM.
 
-No macOS (Apple Silicon/Metal) normalmente use 99.
-Se aparecer erro de memória (out of memory), diminua este valor."
+On macOS (Apple Silicon/Metal) you normally use 99.
+If you get an out-of-memory error, lower this value."
 
-defparam THREADS int "-t" "Threads CPU" \
- "Nº de threads de CPU para geração (-t). Vazio = automático." \
-"Número de threads de CPU usadas na geração (-t / --threads).
+defparam THREADS int "-t" "CPU threads" \
+ "CPU threads used for generation (-t). Empty = automatic." \
+"Number of CPU threads used for generation (-t / --threads).
 
-Vazio = o llama-server escolhe automaticamente.
-Normalmente o ideal é o número de núcleos FÍSICOS (não lógicos).
-Tem pouco efeito quando todas as camadas estão na GPU."
+Empty = llama-server picks automatically.
+The best value is usually the number of PHYSICAL (not logical) cores.
+Has little effect when all layers are on the GPU."
 
 defparam BATCH int "-b" "Batch size" \
- "Tamanho lógico do lote de processamento do prompt (-b)." \
-"Tamanho lógico máximo do lote (-b / --batch-size).
+ "Logical batch size for prompt processing (-b)." \
+"Maximum logical batch size (-b / --batch-size).
 
-Afeta a velocidade de processamento do prompt (prefill).
-Vazio = padrão do llama-server (2048). Valores maiores podem
-acelerar prompts longos mas usam mais memória."
+Affects prompt processing (prefill) speed.
+Empty = llama-server default (2048). Larger values can speed up
+long prompts but use more memory."
 
 defparam UBATCH int "-ub" "Micro-batch" \
- "Tamanho físico do lote (-ub / --ubatch-size)." \
-"Tamanho físico máximo do lote (-ub / --ubatch-size).
+ "Physical batch size (-ub / --ubatch-size)." \
+"Maximum physical batch size (-ub / --ubatch-size).
 
-Deve ser menor ou igual ao batch size.
-Vazio = padrão do llama-server (512). Aumentar (ex.: 1024, 2048)
-pode acelerar o prefill em GPUs com bastante memória."
+Must be less than or equal to the batch size.
+Empty = llama-server default (512). Raising it (e.g. 1024, 2048)
+can speed up prefill on GPUs with plenty of memory."
 
-defparam PARALLEL int "-np" "Slots paralelos" \
- "Quantas requisições simultâneas o servidor atende (-np)." \
-"Número de slots de processamento paralelo (-np / --parallel).
+defparam PARALLEL int "-np" "Parallel slots" \
+ "How many requests the server handles at once (-np)." \
+"Number of parallel processing slots (-np / --parallel).
 
-Cada slot atende uma conversa/requisição ao mesmo tempo.
-ATENÇÃO: o contexto (-c) é dividido entre os slots. Ex.: -c 16384
-com -np 4 dá 4096 tokens para cada requisição.
-Vazio = padrão do llama-server."
+Each slot serves one conversation/request at a time.
+WARNING: the context (-c) is split across slots. E.g. -c 16384
+with -np 4 gives each request 4096 tokens.
+Empty = llama-server default."
 
 defparam FLASH "choice:,auto,on,off" "-fa" "Flash Attention" \
- "Ativa Flash Attention (-fa). Economiza memória e acelera." \
+ "Enables Flash Attention (-fa). Saves memory and speeds things up." \
 "Flash Attention (-fa / --flash-attn).
 
-  (vazio) -> não passa o parâmetro (padrão do llama-server).
-  auto    -> o llama-server decide se usa.
-  on      -> força ligado. Reduz uso de memória e costuma acelerar.
-  off     -> força desligado.
+  (empty) -> the parameter is not passed (llama-server default).
+  auto    -> llama-server decides.
+  on      -> forced on. Reduces memory use and is usually faster.
+  off     -> forced off.
 
-É necessário para quantizar o KV cache em V (cache-type-v).
-Em versões antigas do llama-server o parâmetro não aceita valor;
-este programa detecta isso e se adapta automaticamente."
+Required to quantize the V part of the KV cache (cache-type-v).
+Older llama-server versions take no value for this flag;
+this program detects that and adapts automatically."
 
-defparam CTK "choice:,f16,q8_0,q4_0" "-ctk" "Tipo do KV cache (K)" \
- "Quantização do cache K (-ctk). q8_0 economiza memória." \
-"Tipo de dado do KV cache para K (-ctk / --cache-type-k).
+defparam CTK "choice:,f16,q8_0,q4_0" "-ctk" "KV cache type (K)" \
+ "K cache quantization (-ctk). q8_0 saves memory." \
+"KV cache data type for K (-ctk / --cache-type-k).
 
-  (vazio) -> padrão (f16).
-  q8_0    -> metade da memória, perda de qualidade quase nula.
-  q4_0    -> 1/4 da memória, alguma perda de qualidade.
+  (empty) -> default (f16).
+  q8_0    -> half the memory, almost no quality loss.
+  q4_0    -> a quarter of the memory, some quality loss.
 
-Útil para caber contextos grandes na memória."
+Useful to fit large contexts in memory."
 
-defparam CTV "choice:,f16,q8_0,q4_0" "-ctv" "Tipo do KV cache (V)" \
- "Quantização do cache V (-ctv). Requer Flash Attention." \
-"Tipo de dado do KV cache para V (-ctv / --cache-type-v).
+defparam CTV "choice:,f16,q8_0,q4_0" "-ctv" "KV cache type (V)" \
+ "V cache quantization (-ctv). Requires Flash Attention." \
+"KV cache data type for V (-ctv / --cache-type-v).
 
-Mesmas opções do cache K. Quantizar o V normalmente exige
-Flash Attention ligado (-fa on)."
+Same options as the K cache. Quantizing V usually requires
+Flash Attention to be on (-fa on)."
 
-defparam MLOCK bool "--mlock" "Travar na RAM (mlock)" \
- "Impede o sistema de mandar o modelo para o swap." \
-"--mlock: força o sistema a manter o modelo na RAM, sem swap.
+defparam MLOCK bool "--mlock" "Lock in RAM (mlock)" \
+ "Prevents the OS from swapping the model out." \
+"--mlock: forces the OS to keep the model in RAM, never in swap.
 
-Evita lentidão por paginação, mas exige RAM suficiente e em alguns
-Linux pode precisar aumentar o limite (ulimit -l)."
+Avoids slowdowns from paging, but needs enough RAM, and on some
+Linux systems you may need to raise the limit (ulimit -l)."
 
-defparam NOMMAP bool "--no-mmap" "Desativar mmap" \
- "Carrega o modelo inteiro na memória em vez de mapear o arquivo." \
-"--no-mmap: desativa o mapeamento do arquivo em memória.
+defparam NOMMAP bool "--no-mmap" "Disable mmap" \
+ "Loads the whole model into memory instead of mapping the file." \
+"--no-mmap: disables memory-mapping the model file.
 
-Com mmap (padrão) o modelo carrega mais rápido e compartilha páginas
-com o cache do sistema. Desativar pode ajudar se o disco for lento
-ou em alguns casos de GPU parcial, mas o carregamento fica mais lento."
+With mmap (default) the model loads faster and shares pages with
+the OS file cache. Disabling it can help with slow disks or some
+partial-GPU setups, but loading becomes slower."
 
-defparam JINJA bool "--jinja" "Template Jinja" \
- "Usa o chat template Jinja do modelo (necessário p/ tool calling)." \
-"--jinja: usa o template de chat embutido no GGUF (formato Jinja).
+defparam JINJA bool "--jinja" "Jinja template" \
+ "Uses the model's Jinja chat template (needed for tool calling)." \
+"--jinja: uses the chat template embedded in the GGUF (Jinja format).
 
-Recomendado para modelos modernos e OBRIGATÓRIO para usar
-function/tool calling pela API OpenAI."
+Recommended for modern models and REQUIRED for function/tool
+calling through the OpenAI API."
 
-defparam ALIAS text "--alias" "Alias do modelo" \
- "Nome do modelo exibido na API (/v1/models)." \
-"--alias: nome com que o modelo aparece na API (/v1/models) e que
-os clientes podem usar no campo \"model\".
+defparam ALIAS text "--alias" "Model alias" \
+ "Model name shown by the API (/v1/models)." \
+"--alias: name the model is listed under in the API (/v1/models),
+which clients can use in the \"model\" field.
 
-Vazio = o llama-server usa o caminho/nome do arquivo."
+Empty = llama-server uses the file path/name."
 
-defparam APIKEY text "--api-key" "API Key" \
- "Chave exigida dos clientes (recomendado para acesso remoto)." \
-"--api-key: exige que os clientes enviem esta chave no cabeçalho
-Authorization: Bearer <chave>.
+defparam APIKEY text "--api-key" "API key" \
+ "Key clients must send (recommended for remote access)." \
+"--api-key: requires clients to send this key in the header
+Authorization: Bearer <key>.
 
-FORTEMENTE recomendado: o servidor fica acessível por toda a sua rede.
-A interface web também pedirá a chave.
-Obs.: a chave fica salva em texto no perfil (arquivo com permissão 600)."
+STRONGLY recommended: the server is reachable from your whole network.
+The web UI will also ask for the key.
+Note: the key is stored as plain text in the profile (file mode 600)."
 
-defparam MMPROJ text "--mmproj" "Projetor multimodal" \
- "Arquivo mmproj*.gguf para modelos com visão (imagens)." \
-"--mmproj: caminho do arquivo de projeção multimodal (mmproj-*.gguf).
+defparam MMPROJ text "--mmproj" "Multimodal projector" \
+ "mmproj*.gguf file for vision models (images)." \
+"--mmproj: path to the multimodal projector file (mmproj-*.gguf).
 
-Necessário apenas para modelos de visão (que entendem imagens).
-O arquivo normalmente vem junto do modelo no Hugging Face.
-Vazio = não usa."
+Only needed for vision models (models that understand images).
+The file usually ships alongside the model on Hugging Face.
+Empty = not used."
 
-defparam TEMP float "--temp" "Temperatura padrão" \
- "Criatividade padrão das respostas (0.0 a 2.0)." \
-"--temp: temperatura de amostragem padrão.
+defparam TEMP float "--temp" "Default temperature" \
+ "Default response creativity (0.0 to 2.0)." \
+"--temp: default sampling temperature.
 
-  Baixa (0.1-0.4) -> respostas mais determinísticas/precisas.
-  Média (0.6-0.8) -> equilíbrio (bom para chat).
-  Alta (>1.0)     -> mais criativo e menos coerente.
+  Low (0.1-0.4)    -> more deterministic/precise answers.
+  Medium (0.6-0.8) -> balanced (good for chat).
+  High (>1.0)      -> more creative and less coherent.
 
-Os clientes podem sobrescrever em cada requisição.
-Vazio = padrão do llama-server (0.8)."
+Clients can override it on each request.
+Empty = llama-server default (0.8)."
 
-defparam EXTRA text "" "Argumentos extras" \
- "Qualquer outro argumento do llama-server, como na linha de comando." \
-"Argumentos extras passados literalmente ao llama-server.
+defparam EXTRA text "" "Extra arguments" \
+ "Any other llama-server argument, as on the command line." \
+"Extra arguments passed verbatim to llama-server.
 
-Use para qualquer opção que não está nesta lista. Exemplos:
+Use it for any option not in this list. Examples:
   --top-k 40 --top-p 0.9
   --cont-batching --metrics
   --rope-scaling yarn --rope-scale 4
   --chat-template chatml
   --override-tensor \"exps=CPU\"
 
-Aspas são respeitadas. Veja todas as opções em:
+Quotes are respected. See every option with:
   llama-server --help"
 
-# Valores iniciais (padrão ao abrir pela primeira vez)
+# Initial values (defaults on first launch)
 MODEL=""
 PORT="8080"; CTX="4096"; NGL="99"; THREADS=""; BATCH=""; UBATCH=""
 PARALLEL=""; FLASH=""; CTK=""; CTV=""; MLOCK=""; NOMMAP=""; JINJA="1"; ALIAS=""
 APIKEY=""; MMPROJ=""; TEMP=""; EXTRA=""
 CURRENT_PROFILE=""
 
-# Configurações gerais (settings.conf)
+# General settings (settings.conf)
 LLAMA_BIN=""
 MODEL_DIRS="$HOME/models:$HOME/llama.cpp/models:$HOME/.cache/llama.cpp:$HOME/.cache/huggingface/hub:$HOME/.lmstudio/models"
 STARTUP_TIMEOUT="300"
 
 PROFILE_KEYS="MODEL ${P_KEYS[*]}"
-LEGACY_KEYS="HOST"   # chaves de versões antigas: aceitas nos perfis e ignoradas
+LEGACY_KEYS="HOST"   # keys from older versions: accepted in profiles and ignored
 
-# O servidor sempre escuta em todas as interfaces (0.0.0.0) para permitir acesso
-# remoto. O IP não é um parâmetro: é detectado da máquina e apenas exibido.
+# The server always listens on all interfaces (0.0.0.0) to allow remote access.
+# The IP is not a parameter: it is detected from the machine and only displayed.
 BIND_HOST="0.0.0.0"
 SETTINGS_KEYS="LLAMA_BIN MODEL_DIRS STARTUP_TIMEOUT"
 
 # ----------------------------------------------------------------------------
-# Leitura/gravação de arquivos KEY=valor (sem "source": só chaves permitidas)
+# Reading/writing KEY=value files (no "source": only allowed keys are read)
 # ----------------------------------------------------------------------------
-load_kv_file() {  # load_kv_file arquivo "CHAVES PERMITIDAS"
+load_kv_file() {  # load_kv_file file "ALLOWED KEYS"
     local file="$1" allowed=" $2 " line key val n=0
-    [ -r "$file" ] || { log_warn "Arquivo não encontrado/ilegível: $file"; return 1; }
+    [ -r "$file" ] || { log_warn "File not found/unreadable: $file"; return 1; }
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*) continue ;; esac
         key="${line%%=*}"; val="${line#*=}"
         case " $LEGACY_KEYS " in *" $key "*) continue ;; esac
         case "$allowed" in
             *" $key "*) eval "$key=\$val"; n=$((n + 1)) ;;
-            *) log_warn "Chave desconhecida ignorada em $file: $key" ;;
+            *) log_warn "Unknown key ignored in $file: $key" ;;
         esac
     done <"$file"
-    log_info "Carregado $file ($n chaves)"
+    log_info "Loaded $file ($n keys)"
     return 0
 }
 
-save_kv_file() {  # save_kv_file arquivo "CHAVES" "comentário"
+save_kv_file() {  # save_kv_file file "KEYS" "comment"
     local file="$1" keys="$2" comment="$3" k tmp
     tmp="$file.tmp.$$"
     {
         echo "# $comment"
-        echo "# Gerado por llama-tui $VERSION em $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "# Formato: CHAVE=valor (vazio = não passar o parâmetro)"
+        echo "# Generated by llama-tui $VERSION on $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "# Format: KEY=value (empty = do not pass the parameter)"
         for k in $keys; do
             eval "printf '%s=%s\n' \"\$k\" \"\${$k}\""
         done
     } >"$tmp" && chmod 600 "$tmp" && mv "$tmp" "$file"
     local rc=$?
-    if [ $rc -eq 0 ]; then log_info "Salvo $file"; else log_error "Falha ao salvar $file (rc=$rc)"; rm -f "$tmp"; fi
+    if [ $rc -eq 0 ]; then log_info "Saved $file"; else log_error "Failed to save $file (rc=$rc)"; rm -f "$tmp"; fi
     return $rc
 }
 
@@ -299,10 +298,10 @@ reset_params() {
     ALIAS=""; APIKEY=""; MMPROJ=""; TEMP=""; EXTRA=""
 }
 
-load_profile() {  # nome ou caminho
+load_profile() {  # name or path
     local p="$1" f
     if [ -f "$p" ]; then f="$p"; else f="$PROFILE_DIR/$p.conf"; fi
-    [ -f "$f" ] || { log_error "Perfil não encontrado: $p"; return 1; }
+    [ -f "$f" ] || { log_error "Profile not found: $p"; return 1; }
     reset_params
     load_kv_file "$f" "$PROFILE_KEYS" || return 1
     CURRENT_PROFILE="$(basename "$f" .conf)"
@@ -315,15 +314,15 @@ list_profiles() {
     done
 }
 
-save_settings() { save_kv_file "$SETTINGS_FILE" "$SETTINGS_KEYS" "Configurações gerais do llama-tui"; }
-save_last()     { save_kv_file "$LAST_FILE" "$PROFILE_KEYS" "Última sessão (restaurada ao abrir a TUI)" >/dev/null; }
+save_settings() { save_kv_file "$SETTINGS_FILE" "$SETTINGS_KEYS" "llama-tui general settings"; }
+save_last()     { save_kv_file "$LAST_FILE" "$PROFILE_KEYS" "Last session (restored when the TUI opens)" >/dev/null; }
 
 [ -f "$SETTINGS_FILE" ] && load_kv_file "$SETTINGS_FILE" "$SETTINGS_KEYS"
 
 # ----------------------------------------------------------------------------
-# Utilitários
+# Utilities
 # ----------------------------------------------------------------------------
-param_index() {  # retorna índice de uma chave em P_KEYS
+param_index() {  # prints the index of a key in P_KEYS
     local i
     for i in "${!P_KEYS[@]}"; do
         [ "${P_KEYS[$i]}" = "$1" ] && { echo "$i"; return 0; }
@@ -333,7 +332,7 @@ param_index() {  # retorna índice de uma chave em P_KEYS
 
 get_var() { eval "printf '%s' \"\${$1}\""; }
 
-human_size() {  # bytes -> texto
+human_size() {  # bytes -> text
     awk -v b="$1" 'BEGIN{ split("B KB MB GB TB",u," "); i=1; while (b>=1024 && i<5){b/=1024;i++} printf (i==1?"%d %s":"%.1f %s"), b, u[i] }'
 }
 
@@ -352,7 +351,7 @@ is_ipv4() {
     return 0
 }
 
-local_ips() {  # todos os IPv4 da máquina, exceto loopback
+local_ips() {  # every IPv4 address of this machine, except loopback
     {
         if command -v ip >/dev/null 2>&1; then
             ip -4 -o addr show 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'
@@ -366,7 +365,7 @@ local_ips() {  # todos os IPv4 da máquina, exceto loopback
     done | awk '!seen[$0]++'
 }
 
-primary_ip() {  # IPv4 principal (interface da rota padrão); fallback: primeiro IPv4 encontrado
+primary_ip() {  # main IPv4 (default route interface); fallback: first IPv4 found
     local ip="" ifc
     if command -v ip >/dev/null 2>&1; then
         ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") {print $(i+1); exit}}')"
@@ -379,11 +378,11 @@ primary_ip() {  # IPv4 principal (interface da rota padrão); fallback: primeiro
     if is_ipv4 "$ip"; then echo "$ip"; else echo "127.0.0.1"; return 1; fi
 }
 
-port_in_use() {  # 0 = porta ocupada
+port_in_use() {  # 0 = port is taken
     (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
 }
 
-split_args() {  # split_args "string" -> preenche array SPLIT (respeita aspas)
+split_args() {  # split_args "string" -> fills the SPLIT array (respects quotes)
     SPLIT=()
     local a
     [ -z "${1//[[:space:]]/}" ] && return 0
@@ -391,13 +390,13 @@ split_args() {  # split_args "string" -> preenche array SPLIT (respeita aspas)
     return 0
 }
 
-quote_cmd() {  # imprime um array como comando shell copiável
+quote_cmd() {  # prints an array as a copy-pasteable shell command
     local out="" a
     for a in "$@"; do out="$out $(printf '%q' "$a")"; done
     printf '%s' "${out# }"
 }
 
-mask_cmd() {  # esconde o valor da API key em textos exibidos
+mask_cmd() {  # hides the API key value in displayed text
     local s="$1"
     local q; q="$(printf '%q' "$APIKEY")"
     [ -n "$APIKEY" ] && s="${s//"$q"/********}"
@@ -405,7 +404,7 @@ mask_cmd() {  # esconde o valor da API key em textos exibidos
 }
 
 # ----------------------------------------------------------------------------
-# Localização do llama-server
+# Locating llama-server
 # ----------------------------------------------------------------------------
 find_llama_bin() {
     local c
@@ -428,12 +427,12 @@ llama_help() {
     printf '%s' "$LLAMA_HELP_CACHE"
 }
 
-flash_takes_value() {  # versões novas: -fa on|off|auto ; antigas: -fa (sem valor)
+flash_takes_value() {  # newer versions: -fa on|off|auto ; older: -fa (no value)
     llama_help | grep -E -- '--flash-attn' | grep -Eq 'on\|off|auto'
 }
 
 # ----------------------------------------------------------------------------
-# Montagem e validação do comando
+# Building and validating the command
 # ----------------------------------------------------------------------------
 CMD=()
 build_cmd() {
@@ -460,63 +459,63 @@ build_cmd() {
 }
 
 VALIDATION_ERRORS=""; VALIDATION_WARNINGS=""
-validate_config() {  # retorna 1 se houver erro bloqueante
+validate_config() {  # returns 1 on a blocking error
     VALIDATION_ERRORS=""; VALIDATION_WARNINGS=""
     local i key type val bin
     if ! bin="$(find_llama_bin)"; then
-        VALIDATION_ERRORS="${VALIDATION_ERRORS}- llama-server não encontrado. Configure o caminho em 'Configurações' ou coloque-o no PATH.\n"
+        VALIDATION_ERRORS="${VALIDATION_ERRORS}- llama-server not found. Set its path in 'Settings' or put it on your PATH.\n"
     fi
     if [ -z "$MODEL" ]; then
-        VALIDATION_ERRORS="${VALIDATION_ERRORS}- Nenhum modelo selecionado.\n"
+        VALIDATION_ERRORS="${VALIDATION_ERRORS}- No model selected.\n"
     elif [ ! -f "$MODEL" ]; then
-        VALIDATION_ERRORS="${VALIDATION_ERRORS}- Arquivo do modelo não existe: $MODEL\n"
+        VALIDATION_ERRORS="${VALIDATION_ERRORS}- Model file does not exist: $MODEL\n"
     elif [ ! -r "$MODEL" ]; then
-        VALIDATION_ERRORS="${VALIDATION_ERRORS}- Sem permissão de leitura no modelo: $MODEL\n"
+        VALIDATION_ERRORS="${VALIDATION_ERRORS}- No read permission on the model: $MODEL\n"
     fi
     for i in "${!P_KEYS[@]}"; do
         key="${P_KEYS[$i]}"; type="${P_TYPE[$i]}"; val="$(get_var "$key")"
         [ -z "$val" ] && continue
         case "$type" in
-            int)   [[ "$val" =~ ^-?[0-9]+$ ]] || VALIDATION_ERRORS="${VALIDATION_ERRORS}- ${P_LABEL[$i]} deve ser um número inteiro (atual: '$val').\n" ;;
-            float) [[ "$val" =~ ^[0-9]*\.?[0-9]+$ ]] || VALIDATION_ERRORS="${VALIDATION_ERRORS}- ${P_LABEL[$i]} deve ser um número (ex.: 0.7) (atual: '$val').\n" ;;
+            int)   [[ "$val" =~ ^-?[0-9]+$ ]] || VALIDATION_ERRORS="${VALIDATION_ERRORS}- ${P_LABEL[$i]} must be a whole number (current: '$val').\n" ;;
+            float) [[ "$val" =~ ^[0-9]*\.?[0-9]+$ ]] || VALIDATION_ERRORS="${VALIDATION_ERRORS}- ${P_LABEL[$i]} must be a number (e.g. 0.7) (current: '$val').\n" ;;
         esac
     done
     if [ -n "$PORT" ] && [[ "$PORT" =~ ^[0-9]+$ ]]; then
         if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-            VALIDATION_ERRORS="${VALIDATION_ERRORS}- Porta deve estar entre 1 e 65535.\n"
+            VALIDATION_ERRORS="${VALIDATION_ERRORS}- Port must be between 1 and 65535.\n"
         elif ! server_pid >/dev/null && port_in_use "$PORT"; then
-            VALIDATION_ERRORS="${VALIDATION_ERRORS}- A porta $PORT já está em uso por outro programa. Escolha outra porta ou feche o programa que a usa.\n"
+            VALIDATION_ERRORS="${VALIDATION_ERRORS}- Port $PORT is already in use by another program. Pick another port or close the program using it.\n"
         fi
     fi
     if [ -n "$MMPROJ" ] && [ ! -f "$MMPROJ" ]; then
-        VALIDATION_ERRORS="${VALIDATION_ERRORS}- Arquivo mmproj não existe: $MMPROJ\n"
+        VALIDATION_ERRORS="${VALIDATION_ERRORS}- mmproj file does not exist: $MMPROJ\n"
     fi
     if [ -z "$APIKEY" ]; then
-        VALIDATION_WARNINGS="${VALIDATION_WARNINGS}- Sem API Key: qualquer pessoa na sua rede poderá usar o servidor.\n"
+        VALIDATION_WARNINGS="${VALIDATION_WARNINGS}- No API key: anyone on your network will be able to use the server.\n"
     fi
     if [ -n "$CTV" ] && [ "$CTV" != "f16" ] && { [ -z "$FLASH" ] || [ "$FLASH" = "off" ]; }; then
-        VALIDATION_WARNINGS="${VALIDATION_WARNINGS}- Cache V quantizado ($CTV) geralmente exige Flash Attention = on.\n"
+        VALIDATION_WARNINGS="${VALIDATION_WARNINGS}- Quantized V cache ($CTV) usually requires Flash Attention = on.\n"
     fi
-    [ -n "$VALIDATION_ERRORS" ] && { log_warn "Validação falhou: $(printf '%b' "$VALIDATION_ERRORS" | tr '\n' ' ')"; return 1; }
+    [ -n "$VALIDATION_ERRORS" ] && { log_warn "Validation failed: $(printf '%b' "$VALIDATION_ERRORS" | tr '\n' ' ')"; return 1; }
     return 0
 }
 
 # ----------------------------------------------------------------------------
-# Controle do processo do servidor
+# Server process control
 # ----------------------------------------------------------------------------
-server_pid() {  # imprime o PID se o servidor gerenciado estiver vivo
+server_pid() {  # prints the PID if the managed server is alive
     local pid
     [ -f "$PID_FILE" ] || return 1
     pid="$(cat "$PID_FILE" 2>/dev/null)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         echo "$pid"; return 0
     fi
-    log_info "PID file obsoleto removido (pid=$pid)"
+    log_info "Removed stale PID file (pid=$pid)"
     rm -f "$PID_FILE"
     return 1
 }
 
-runinfo_get() {  # runinfo_get CHAVE
+runinfo_get() {  # runinfo_get KEY
     [ -f "$RUNINFO_FILE" ] || return 1
     sed -n "s/^$1=//p" "$RUNINFO_FILE" | head -n 1
 }
@@ -527,7 +526,7 @@ last_server_log() {
     ls -1t "$LOG_DIR"/server-*.log 2>/dev/null | head -n 1
 }
 
-health_status() {  # health_status porta -> ok | loading | down
+health_status() {  # health_status port -> ok | loading | down
     local port="$1" code
     command -v curl >/dev/null 2>&1 || { port_in_use "$port" && echo ok || echo down; return; }
     code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$port/health" 2>/dev/null)"
@@ -538,13 +537,13 @@ health_status() {  # health_status porta -> ok | loading | down
     esac
 }
 
-# Inicia em segundo plano. Define SERVER_LOG. Retorna 0 se o processo subiu.
+# Starts in the background. Sets SERVER_LOG. Returns 0 if the process came up.
 SERVER_LOG=""
 start_server_bg() {
     local pid safe_name
     if pid="$(server_pid)"; then
-        log_warn "Tentativa de iniciar com servidor já ativo (pid=$pid)"
-        echo "Já existe um servidor em execução (PID $pid). Pare-o primeiro." >&2
+        log_warn "Start attempted while a server is already running (pid=$pid)"
+        echo "A server is already running (PID $pid). Stop it first." >&2
         return 2
     fi
     build_cmd
@@ -552,14 +551,14 @@ start_server_bg() {
     SERVER_LOG="$LOG_DIR/server-$(date +%Y%m%d-%H%M%S)-$safe_name.log"
     {
         echo "=================================================================="
-        echo " llama-tui $VERSION - início: $(date '+%Y-%m-%d %H:%M:%S')"
-        echo " Perfil : ${CURRENT_PROFILE:-(sem perfil)}"
-        echo " Modelo : $MODEL"
-        echo " Comando: $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
+        echo " llama-tui $VERSION - started: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo " Profile: ${CURRENT_PROFILE:-(no profile)}"
+        echo " Model  : $MODEL"
+        echo " Command: $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
         echo "=================================================================="
     } >>"$SERVER_LOG"
-    log_info "Iniciando servidor: $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
-    log_info "Log do servidor: $SERVER_LOG"
+    log_info "Starting server: $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
+    log_info "Server log: $SERVER_LOG"
 
     nohup "${CMD[@]}" >>"$SERVER_LOG" 2>&1 </dev/null &
     pid=$!
@@ -570,115 +569,115 @@ start_server_bg() {
     } >"$RUNINFO_FILE"
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
-        log_error "Servidor encerrou imediatamente (pid=$pid). Veja $SERVER_LOG"
+        log_error "Server exited immediately (pid=$pid). See $SERVER_LOG"
         rm -f "$PID_FILE"
         return 1
     fi
-    log_info "Servidor iniciado (pid=$pid)"
+    log_info "Server started (pid=$pid)"
     return 0
 }
 
-stop_server() {  # para o servidor; retorna 0 se parou
+stop_server() {  # stops the server; returns 0 if it stopped
     local pid i
-    pid="$(server_pid)" || { log_info "Stop solicitado, mas nenhum servidor ativo"; return 3; }
-    log_info "Parando servidor (pid=$pid) com SIGTERM"
+    pid="$(server_pid)" || { log_info "Stop requested, but no server is running"; return 3; }
+    log_info "Stopping server (pid=$pid) with SIGTERM"
     kill -TERM "$pid" 2>/dev/null
     for i in $(seq 1 30); do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.5
     done
     if kill -0 "$pid" 2>/dev/null; then
-        log_warn "Servidor não respondeu ao SIGTERM em 15s; enviando SIGKILL (pid=$pid)"
+        log_warn "Server did not respond to SIGTERM within 15s; sending SIGKILL (pid=$pid)"
         kill -KILL "$pid" 2>/dev/null
         sleep 1
     fi
     if kill -0 "$pid" 2>/dev/null; then
-        log_error "Falha ao parar o servidor (pid=$pid)"
+        log_error "Failed to stop the server (pid=$pid)"
         return 1
     fi
     local l; l="$(runinfo_get LOG)"
-    [ -n "$l" ] && echo "=== Servidor parado pelo llama-tui em $(date '+%Y-%m-%d %H:%M:%S') ===" >>"$l"
+    [ -n "$l" ] && echo "=== Server stopped by llama-tui on $(date '+%Y-%m-%d %H:%M:%S') ===" >>"$l"
     rm -f "$PID_FILE"
-    log_info "Servidor parado (pid=$pid)"
+    log_info "Server stopped (pid=$pid)"
     return 0
 }
 
-access_urls() {  # imprime as URLs de acesso para a porta
+access_urls() {  # prints the access URLs for the port
     local port="${1:-8080}" main ip
     main="$(primary_ip)"
-    echo "  Rede (principal): http://$main:$port"
+    echo "  Network (main) : http://$main:$port"
     for ip in $(local_ips); do
-        [ "$ip" != "$main" ] && echo "  Rede (outra)    : http://$ip:$port"
+        [ "$ip" != "$main" ] && echo "  Network (other): http://$ip:$port"
     done
-    echo "  Esta máquina    : http://127.0.0.1:$port"
+    echo "  This machine   : http://127.0.0.1:$port"
 }
 
 # =============================================================================
-#  MODO CLI (sem TUI)
+#  CLI MODE (no TUI)
 # =============================================================================
 cli_help() {
 cat <<EOF
-llama-tui $VERSION - lançador para o llama-server (llama.cpp)
+llama-tui $VERSION - launcher for llama-server (llama.cpp)
 
-USO
-  $PROG                     Abre a interface TUI (requer 'dialog')
-  $PROG run   <perfil>      Executa em primeiro plano, saída na tela + log (Ctrl+C para)
-  $PROG start <perfil>      Inicia em segundo plano e aguarda ficar pronto
-  $PROG stop                Para o servidor iniciado pelo llama-tui
-  $PROG restart <perfil>    Para (se houver) e inicia com o perfil
-  $PROG status              Mostra se o servidor está rodando e os endereços
-  $PROG list                Lista os perfis salvos
-  $PROG show  <perfil>      Mostra o comando que seria executado
-  $PROG logs  [-f]          Mostra (ou acompanha com -f) o log do último servidor
-  $PROG applog              Acompanha o log do próprio programa
-  $PROG ip                  Mostra o IPv4 desta máquina (usado para acesso remoto)
-  $PROG help                Esta ajuda
+USAGE
+  $PROG                      Open the TUI (requires 'dialog')
+  $PROG run   <profile>      Run in the foreground, output on screen + log (Ctrl+C stops)
+  $PROG start <profile>      Start in the background and wait until ready
+  $PROG stop                 Stop the server started by llama-tui
+  $PROG restart <profile>    Stop (if running) and start with the profile
+  $PROG status               Show whether the server is running and its addresses
+  $PROG list                 List saved profiles
+  $PROG show  <profile>      Show the command that would be run
+  $PROG logs  [-f]           Show (or follow with -f) the latest server log
+  $PROG applog               Follow the program's own log
+  $PROG ip                   Show this machine's IPv4 (used for remote access)
+  $PROG help                 This help
 
-  <perfil> pode ser o nome de um perfil salvo ou o caminho de um arquivo .conf
+  <profile> can be the name of a saved profile or the path to a .conf file
 
-ARQUIVOS
-  Perfis        : $PROFILE_DIR/<nome>.conf
-  Configurações : $SETTINGS_FILE
-  Log programa  : $APP_LOG   (append; arquivado ao passar de 5 MB)
-  Logs servidor : $LOG_DIR/server-<data>-<modelo>.log  (um por execução)
+FILES
+  Profiles    : $PROFILE_DIR/<name>.conf
+  Settings    : $SETTINGS_FILE
+  App log     : $APP_LOG   (append-only; archived past 5 MB)
+  Server logs : $LOG_DIR/server-<date>-<model>.log  (one per run)
 
-CÓDIGOS DE SAÍDA
-  0 ok | 1 erro | 2 servidor já em execução | 3 nenhum servidor em execução
+EXIT CODES
+  0 ok | 1 error | 2 server already running | 3 no server running
 EOF
 }
 
 cli_require_profile() {
-    [ -n "$1" ] || { echo "ERRO: informe o nome do perfil. Perfis disponíveis:" >&2; list_profiles | sed 's/^/  /' >&2; exit 1; }
-    load_profile "$1" || { echo "ERRO: perfil '$1' não encontrado em $PROFILE_DIR" >&2; exit 1; }
+    [ -n "$1" ] || { echo "ERROR: give a profile name. Available profiles:" >&2; list_profiles | sed 's/^/  /' >&2; exit 1; }
+    load_profile "$1" || { echo "ERROR: profile '$1' not found in $PROFILE_DIR" >&2; exit 1; }
 }
 
 cli_validate() {
     if ! validate_config; then
-        echo "ERRO: configuração inválida:" >&2
+        echo "ERROR: invalid configuration:" >&2
         printf '%b' "$VALIDATION_ERRORS" >&2
         exit 1
     fi
-    [ -n "$VALIDATION_WARNINGS" ] && { echo "AVISO:" >&2; printf '%b' "$VALIDATION_WARNINGS" >&2; }
+    [ -n "$VALIDATION_WARNINGS" ] && { echo "WARNING:" >&2; printf '%b' "$VALIDATION_WARNINGS" >&2; }
 }
 
 cli_wait_ready() {
     local port="$1" pid="$2" t=0 st
-    printf 'Aguardando o modelo carregar'
+    printf 'Waiting for the model to load'
     while [ "$t" -lt "$STARTUP_TIMEOUT" ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
-            echo; echo "ERRO: o servidor encerrou durante o carregamento. Últimas linhas do log:" >&2
+            echo; echo "ERROR: the server exited while loading. Last log lines:" >&2
             tail -n 25 "$SERVER_LOG" >&2
-            echo "Log completo: $SERVER_LOG" >&2
+            echo "Full log: $SERVER_LOG" >&2
             rm -f "$PID_FILE"
-            log_error "Servidor morreu durante o carregamento (pid=$pid)"
+            log_error "Server died while loading (pid=$pid)"
             return 1
         fi
         st="$(health_status "$port")"
-        [ "$st" = "ok" ] && { echo " pronto! (${t}s)"; log_info "Servidor pronto em ${t}s"; return 0; }
+        [ "$st" = "ok" ] && { echo " ready! (${t}s)"; log_info "Server ready in ${t}s"; return 0; }
         printf '.'; sleep 2; t=$((t + 2))
     done
-    echo; echo "AVISO: tempo limite de ${STARTUP_TIMEOUT}s atingido; o servidor continua carregando. Acompanhe com: $PROG logs -f"
-    log_warn "Timeout de inicialização (${STARTUP_TIMEOUT}s)"
+    echo; echo "WARNING: ${STARTUP_TIMEOUT}s timeout reached; the server is still loading. Follow it with: $PROG logs -f"
+    log_warn "Startup timeout (${STARTUP_TIMEOUT}s)"
     return 0
 }
 
@@ -693,7 +692,7 @@ cli_main() {
             for p in $(list_profiles); do
                 printf '  %-25s %s\n' "$p" "$(sed -n 's/^MODEL=//p' "$PROFILE_DIR/$p.conf" | head -n 1)"; n=$((n + 1))
             done
-            [ $n -eq 0 ] && echo "Nenhum perfil salvo em $PROFILE_DIR"
+            [ $n -eq 0 ] && echo "No saved profiles in $PROFILE_DIR"
             ;;
         show)
             cli_require_profile "$1"; build_cmd
@@ -701,24 +700,24 @@ cli_main() {
             ;;
         run)
             cli_require_profile "$1"; cli_validate; build_cmd
-            if server_pid >/dev/null; then echo "ERRO: já existe um servidor em execução (PID $(server_pid))." >&2; exit 2; fi
+            if server_pid >/dev/null; then echo "ERROR: a server is already running (PID $(server_pid))." >&2; exit 2; fi
             local safe; safe="$(printf %s "$(basename "$MODEL" .gguf)" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)"
             SERVER_LOG="$LOG_DIR/server-$(date +%Y%m%d-%H%M%S)-$safe.log"
             {
                 echo "=================================================================="
-                echo " llama-tui $VERSION (run/foreground) - início: $(date '+%Y-%m-%d %H:%M:%S')"
-                echo " Perfil : $CURRENT_PROFILE"
-                echo " Comando: $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
+                echo " llama-tui $VERSION (run/foreground) - started: $(date '+%Y-%m-%d %H:%M:%S')"
+                echo " Profile: $CURRENT_PROFILE"
+                echo " Command: $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
                 echo "=================================================================="
             } | tee -a "$SERVER_LOG"
-            echo "Endereços de acesso:"; access_urls "${PORT:-8080}"
-            echo "Log: $SERVER_LOG   (Ctrl+C para parar)"
+            echo "Access addresses:"; access_urls "${PORT:-8080}"
+            echo "Log: $SERVER_LOG   (Ctrl+C to stop)"
             log_info "Run (foreground): $(mask_cmd "$(quote_cmd "${CMD[@]}")")"
-            trap ':' INT   # o Ctrl+C encerra o llama-server; o script continua para registrar o fim
+            trap ':' INT   # Ctrl+C stops llama-server; the script keeps going to log the exit
             "${CMD[@]}" 2>&1 | tee -i -a "$SERVER_LOG"
             local rc=${PIPESTATUS[0]}
-            echo "=== Encerrado em $(date '+%Y-%m-%d %H:%M:%S') (código $rc) ===" | tee -a "$SERVER_LOG"
-            log_info "Run (foreground) terminou com código $rc"
+            echo "=== Exited on $(date '+%Y-%m-%d %H:%M:%S') (code $rc) ===" | tee -a "$SERVER_LOG"
+            log_info "Run (foreground) exited with code $rc"
             exit "$rc"
             ;;
         start)
@@ -726,19 +725,19 @@ cli_main() {
             start_server_bg; local rc=$?
             [ $rc -eq 2 ] && exit 2
             if [ $rc -ne 0 ]; then
-                echo "ERRO: o servidor não iniciou. Últimas linhas:" >&2; tail -n 25 "$SERVER_LOG" >&2
-                echo "Log completo: $SERVER_LOG" >&2; exit 1
+                echo "ERROR: the server did not start. Last lines:" >&2; tail -n 25 "$SERVER_LOG" >&2
+                echo "Full log: $SERVER_LOG" >&2; exit 1
             fi
-            echo "Servidor iniciado (PID $(cat "$PID_FILE")). Log: $SERVER_LOG"
+            echo "Server started (PID $(cat "$PID_FILE")). Log: $SERVER_LOG"
             cli_wait_ready "${PORT:-8080}" "$(cat "$PID_FILE")" || exit 1
-            echo "Endereços de acesso:"; access_urls "${PORT:-8080}"
-            echo "Para parar: $PROG stop"
+            echo "Access addresses:"; access_urls "${PORT:-8080}"
+            echo "To stop: $PROG stop"
             ;;
         stop)
             stop_server; case $? in
-                0) echo "Servidor parado." ;;
-                3) echo "Nenhum servidor do llama-tui em execução."; exit 3 ;;
-                *) echo "ERRO: não foi possível parar o servidor. Veja $APP_LOG" >&2; exit 1 ;;
+                0) echo "Server stopped." ;;
+                3) echo "No llama-tui server is running."; exit 3 ;;
+                *) echo "ERROR: could not stop the server. See $APP_LOG" >&2; exit 1 ;;
             esac
             ;;
         restart)
@@ -750,60 +749,60 @@ cli_main() {
             local pid
             if pid="$(server_pid)"; then
                 local p; p="$(runinfo_get PORT)"
-                echo "Servidor RODANDO (PID $pid) - estado: $(health_status "$p")"
-                echo "  Desde : $(runinfo_get STARTED)"
-                echo "  Perfil: $(runinfo_get PROFILE)"
-                echo "  Modelo: $(runinfo_get MODEL)"
-                echo "  Log   : $(runinfo_get LOG)"
+                echo "Server RUNNING (PID $pid) - state: $(health_status "$p")"
+                echo "  Since  : $(runinfo_get STARTED)"
+                echo "  Profile: $(runinfo_get PROFILE)"
+                echo "  Model  : $(runinfo_get MODEL)"
+                echo "  Log    : $(runinfo_get LOG)"
                 access_urls "$p"
             else
-                echo "Nenhum servidor do llama-tui em execução. IP desta máquina: $(primary_ip)"; exit 3
+                echo "No llama-tui server is running. This machine's IP: $(primary_ip)"; exit 3
             fi
             ;;
         logs)
             local l; l="$(last_server_log)"
-            [ -n "$l" ] || { echo "Nenhum log de servidor encontrado."; exit 1; }
+            [ -n "$l" ] || { echo "No server log found."; exit 1; }
             echo "==> $l"
             if [ "$1" = "-f" ]; then tail -n 50 -f "$l"; else tail -n 100 "$l"; fi
             ;;
         applog) tail -n 50 -f "$APP_LOG" ;;
         ip) primary_ip ;;
-        *) echo "Comando desconhecido: $cmd" >&2; echo "Use: $PROG help" >&2; exit 1 ;;
+        *) echo "Unknown command: $cmd" >&2; echo "Use: $PROG help" >&2; exit 1 ;;
     esac
 }
 
 # =============================================================================
-#  MODO TUI (dialog)
+#  TUI MODE (dialog)
 # =============================================================================
-BACKTITLE="llama-tui $VERSION  |  Setas/Tab navegam, Enter confirma, Esc volta"
+BACKTITLE="llama-tui $VERSION  |  Arrows/Tab move, Enter confirms, Esc goes back"
 
 term_size() {
     TL=$(tput lines 2>/dev/null || echo 24); TC=$(tput cols 2>/dev/null || echo 80)
     [ "$TL" -lt 20 ] && TL=20; [ "$TC" -lt 70 ] && TC=70
 }
 
-# d: executa o dialog e devolve a escolha em $REPLY; retorno = código do dialog
+# d: runs dialog and returns the choice in $REPLY; return code = dialog's code
 d() {
     local rc
-    # --cr-wrap: respeita as quebras de linha dos textos; rótulos padrão em português
+    # --cr-wrap: keeps the line breaks in the texts
     REPLY="$(dialog --backtitle "$BACKTITLE" --colors --cr-wrap \
-        --ok-label "OK" --cancel-label "Cancelar" --yes-label "Sim" --no-label "Não" \
-        --help-label "Ajuda" --exit-label "Voltar" "$@" 2>&1 >/dev/tty)"
+        --ok-label "OK" --cancel-label "Cancel" --yes-label "Yes" --no-label "No" \
+        --help-label "Help" --exit-label "Back" "$@" 2>&1 >/dev/tty)"
     rc=$?
     [ $rc -eq 255 ] && [ -n "$REPLY" ] && log_error "dialog: $REPLY"
     return $rc
 }
 
 msg()  { term_size; d --title "$1" --msgbox "$2" $((TL - 4)) $((TC - 6)); }
-info() { d --title "${2:-Aguarde}" --infobox "$1" 7 60; }
+info() { d --title "${2:-Please wait}" --infobox "$1" 7 60; }
 ask()  { term_size; d --title "$1" --yesno "$2" $((TL > 22 ? 20 : TL - 4)) $((TC - 10)); }
 
 status_line() {
     local pid
     if pid="$(server_pid)"; then
-        echo "\\Z2\\ZbSERVIDOR RODANDO\\Zn (PID $pid, porta $(runinfo_get PORT))"
+        echo "\\Z2\\ZbSERVER RUNNING\\Zn (PID $pid, port $(runinfo_get PORT))"
     else
-        echo "\\Z1Servidor parado\\Zn"
+        echo "\\Z1Server stopped\\Zn"
     fi
 }
 
@@ -812,13 +811,13 @@ model_label() {
         local s=""; [ -f "$MODEL" ] && s=" ($(human_size "$(file_size "$MODEL")"))"
         echo "$(basename "$MODEL")$s"
     else
-        echo "(nenhum)"
+        echo "(none)"
     fi
 }
 
-# ---------------- Seleção de modelo ----------------
+# ---------------- Model selection ----------------
 FOUND_MODELS=()
-scan_models() {  # scan_models [filtro]
+scan_models() {  # scan_models [filter]
     local filter="$1" dir f old_ifs="$IFS"
     FOUND_MODELS=()
     IFS=':'
@@ -828,7 +827,7 @@ scan_models() {  # scan_models [filtro]
         [ -d "$dir" ] || continue
         while IFS= read -r f; do
             case "$f" in
-                *-0000[2-9]-of-*|*-000[1-9][0-9]-of-*) continue ;;   # partes 2+ de modelos divididos
+                *-0000[2-9]-of-*|*-000[1-9][0-9]-of-*) continue ;;   # parts 2+ of split models
                 */mmproj*|*mmproj-*) continue ;;
             esac
             if [ -n "$filter" ]; then
@@ -838,13 +837,13 @@ scan_models() {  # scan_models [filtro]
         done < <(find -L "$dir" -type f -iname '*.gguf' 2>/dev/null | sort)
     done
     IFS="$old_ifs"
-    log_info "Busca de modelos (filtro='$filter'): ${#FOUND_MODELS[@]} encontrados em $MODEL_DIRS"
+    log_info "Model search (filter='$filter'): ${#FOUND_MODELS[@]} found in $MODEL_DIRS"
 }
 
 pick_from_found() {
     local items=() i f
     if [ ${#FOUND_MODELS[@]} -eq 0 ]; then
-        msg "Nenhum modelo" "Nenhum arquivo .gguf foi encontrado nas pastas de busca:\n\n$(echo "$MODEL_DIRS" | tr ':' '\n')\n\nDicas:\n - Adicione a pasta dos seus modelos em 'Pastas de busca'.\n - Ou use 'Navegar no sistema de arquivos' / 'Digitar caminho'."
+        msg "No models" "No .gguf file was found in the search folders:\n\n$(echo "$MODEL_DIRS" | tr ':' '\n')\n\nTips:\n - Add your models folder under 'Manage search folders'.\n - Or use 'Browse the file system' / 'Type or paste the path'."
         return 1
     fi
     for i in "${!FOUND_MODELS[@]}"; do
@@ -852,98 +851,98 @@ pick_from_found() {
         items+=("$((i + 1))" "$(human_size "$(file_size "$f")")  $(basename "$f")" "$f")
     done
     term_size
-    d --title "Modelos encontrados (${#FOUND_MODELS[@]})" --item-help \
-      --menu "Escolha o modelo. O caminho completo aparece na linha inferior." \
+    d --title "Models found (${#FOUND_MODELS[@]})" --item-help \
+      --menu "Pick the model. The full path is shown on the bottom line." \
       $((TL - 4)) $((TC - 6)) $((TL - 12)) "${items[@]}" || return 1
     MODEL="${FOUND_MODELS[$((REPLY - 1))]}"
-    log_info "Modelo selecionado: $MODEL"
+    log_info "Model selected: $MODEL"
     return 0
 }
 
 menu_model() {
     while true; do
         term_size
-        d --title "Selecionar modelo" --cancel-label "Voltar" --menu \
-"Modelo atual: \\Zb$(model_label)\\Zn\n\nO modelo é um arquivo .gguf. Escolha como localizá-lo:" \
+        d --title "Select model" --cancel-label "Back" --menu \
+"Current model: \\Zb$(model_label)\\Zn\n\nThe model is a .gguf file. Choose how to find it:" \
           $((TL - 4)) $((TC - 6)) 7 \
-          1 "Listar todos os .gguf das pastas de busca" \
-          2 "Buscar por nome (filtro)" \
-          3 "Navegar no sistema de arquivos" \
-          4 "Digitar/colar o caminho do arquivo" \
-          5 "Gerenciar pastas de busca" || return
+          1 "List every .gguf in the search folders" \
+          2 "Search by name (filter)" \
+          3 "Browse the file system" \
+          4 "Type or paste the file path" \
+          5 "Manage search folders" || return
         case "$REPLY" in
-            1) info "Procurando arquivos .gguf..."; scan_models ""; pick_from_found && return ;;
-            2) d --title "Filtro" --inputbox "Parte do nome do modelo (sem diferenciar maiúsculas).\nEx.: qwen, llama-3, Q4_K_M" 10 60 "" || continue
-               info "Procurando '$REPLY'..."; scan_models "$REPLY"; pick_from_found && return ;;
+            1) info "Looking for .gguf files..."; scan_models ""; pick_from_found && return ;;
+            2) d --title "Filter" --inputbox "Part of the model name (case-insensitive).\nE.g. qwen, llama-3, Q4_K_M" 10 60 "" || continue
+               info "Looking for '$REPLY'..."; scan_models "$REPLY"; pick_from_found && return ;;
             3) local start="${MODEL%/*}"; [ -d "$start" ] || start="$HOME/"
-               msg "Como navegar" "No explorador a seguir:\n\n - TAB alterna entre a lista de pastas, a de arquivos e o campo de caminho.\n - Setas movem; ESPAÇO entra na pasta / seleciona o arquivo.\n - Você também pode editar o caminho diretamente no campo inferior.\n - Enter (OK) confirma o arquivo selecionado."
+               msg "How to browse" "In the file browser that follows:\n\n - TAB switches between the folder list, the file list and the path field.\n - Arrows move; SPACE enters a folder / selects a file.\n - You can also edit the path directly in the bottom field.\n - Enter (OK) confirms the selected file."
                term_size
-               d --title "Escolha o arquivo .gguf" --fselect "${start%/}/" $((TL - 10)) $((TC - 8)) || continue
+               d --title "Choose the .gguf file" --fselect "${start%/}/" $((TL - 10)) $((TC - 8)) || continue
                if [ -f "$REPLY" ]; then
-                   case "$REPLY" in *.gguf|*.GGUF) ;; *) ask "Aviso" "O arquivo não termina em .gguf:\n$REPLY\n\nUsar mesmo assim?" || continue ;; esac
-                   MODEL="$REPLY"; log_info "Modelo selecionado (fselect): $MODEL"; return
+                   case "$REPLY" in *.gguf|*.GGUF) ;; *) ask "Warning" "The file does not end in .gguf:\n$REPLY\n\nUse it anyway?" || continue ;; esac
+                   MODEL="$REPLY"; log_info "Model selected (fselect): $MODEL"; return
                else
-                   msg "Arquivo inválido" "O caminho selecionado não é um arquivo:\n\n$REPLY\n\nNavegue até o arquivo e selecione-o com ESPAÇO antes de confirmar."
+                   msg "Invalid file" "The selected path is not a file:\n\n$REPLY\n\nNavigate to the file and select it with SPACE before confirming."
                fi ;;
-            4) d --title "Caminho do modelo" --inputbox "Caminho completo do arquivo .gguf (~ é aceito):" 9 $((TC - 10)) "$MODEL" || continue
+            4) d --title "Model path" --inputbox "Full path to the .gguf file (~ is accepted):" 9 $((TC - 10)) "$MODEL" || continue
                local p="${REPLY/#\~/$HOME}"
-               if [ -f "$p" ]; then MODEL="$p"; log_info "Modelo selecionado (manual): $MODEL"; return
-               else msg "Arquivo não encontrado" "Não existe arquivo em:\n\n$p"; fi ;;
-            5) d --title "Pastas de busca" --inputbox \
-"Pastas onde procurar modelos, separadas por ':' (dois-pontos).\nA busca é recursiva e segue links simbólicos.\n\nExemplo: ~/models:/mnt/ssd/gguf" 12 $((TC - 10)) "$MODEL_DIRS" || continue
+               if [ -f "$p" ]; then MODEL="$p"; log_info "Model selected (manual): $MODEL"; return
+               else msg "File not found" "No file exists at:\n\n$p"; fi ;;
+            5) d --title "Search folders" --inputbox \
+"Folders to search for models, separated by ':' (colon).\nThe search is recursive and follows symbolic links.\n\nExample: ~/models:/mnt/ssd/gguf" 12 $((TC - 10)) "$MODEL_DIRS" || continue
                MODEL_DIRS="$REPLY"; save_settings ;;
         esac
     done
 }
 
-# ---------------- Edição de parâmetros ----------------
-display_value() {  # índice -> valor legível
+# ---------------- Parameter editing ----------------
+display_value() {  # index -> readable value
     local i="$1" v; v="$(get_var "${P_KEYS[$i]}")"
     case "${P_TYPE[$i]}" in
-        bool) [ -n "$v" ] && echo "[x] ligado" || echo "[ ] desligado" ;;
-        *) if [ -z "$v" ]; then echo "(padrão)"
+        bool) [ -n "$v" ] && echo "[x] on" || echo "[ ] off" ;;
+        *) if [ -z "$v" ]; then echo "(default)"
            elif [ "${P_KEYS[$i]}" = "APIKEY" ]; then echo "********"
            else echo "$v"; fi ;;
     esac
 }
 
-pad() {  # pad texto largura  (conta caracteres, não bytes, para alinhar acentos)
+pad() {  # pad text width  (counts characters, not bytes)
     local t="$1"
     while [ ${#t} -lt "$2" ]; do t="$t "; done
     printf '%s' "$t"
 }
 
-show_param_doc() {  # índice: mostra a documentação completa (rolável)
+show_param_doc() {  # index: shows the full documentation (scrollable)
     local idx="$1" tmp
     tmp="$(mktemp "${TMPDIR:-/tmp}/llama-tui.XXXXXX")"
-    printf '%s\n\nFlag: %s\n%s\n' "${P_LABEL[$idx]}" "${P_FLAG[$idx]:-(argumentos livres)}" "${P_DOC[$idx]}" >"$tmp"
+    printf '%s\n\nFlag: %s\n%s\n' "${P_LABEL[$idx]}" "${P_FLAG[$idx]:-(free-form arguments)}" "${P_DOC[$idx]}" >"$tmp"
     term_size
-    d --title "Ajuda: ${P_LABEL[$idx]}" --textbox "$tmp" $((TL - 4)) $((TC - 6))
+    d --title "Help: ${P_LABEL[$idx]}" --textbox "$tmp" $((TL - 4)) $((TC - 6))
     rm -f "$tmp"
 }
 
-edit_param() {  # índice do parâmetro em P_KEYS
+edit_param() {  # parameter index in P_KEYS
     local idx="$1"
     local key="${P_KEYS[$idx]}" type="${P_TYPE[$idx]}" label="${P_LABEL[$idx]}"
-    local flag="${P_FLAG[$idx]:-(livre)}" cur new rc w header opts o items def
+    local flag="${P_FLAG[$idx]:-(free-form)}" cur new rc w header opts o items def
     cur="$(get_var "$key")"
     term_size
     w=$((TC - 8)); [ "$w" -gt 76 ] && w=76
-    header="Flag: $flag\n${P_SHORT[$idx]}\n\nValor atual: $(display_value "$idx")"
+    header="Flag: $flag\n${P_SHORT[$idx]}\n\nCurrent value: $(display_value "$idx")"
 
     case "$type" in
         bool)
-            [ -n "$cur" ] && def="ligado" || def="desligado"
+            [ -n "$cur" ] && def="on" || def="off"
             while true; do
                 d --title "$label" --help-button --default-item "$def" --menu \
-                  "$header\n\nEscolha com as setas e confirme com Enter.\n<Ajuda> mostra a explicação completa." \
+                  "$header\n\nPick with the arrows and confirm with Enter.\n<Help> shows the full explanation." \
                   16 "$w" 2 \
-                  ligado    "Ligado    (passa $flag)" \
-                  desligado "Desligado (não passa)"
+                  on  "On   (passes $flag)" \
+                  off "Off  (not passed)"
                 rc=$?
                 [ $rc -eq 2 ] && { show_param_doc "$idx"; continue; }
                 [ $rc -ne 0 ] && return
-                [ "$REPLY" = "ligado" ] && new="1" || new=""
+                [ "$REPLY" = "on" ] && new="1" || new=""
                 break
             done ;;
         choice:*)
@@ -951,27 +950,27 @@ edit_param() {  # índice do parâmetro em P_KEYS
             local old_ifs="$IFS"; IFS=','
             set -f
             for o in $opts; do
-                if [ -z "$o" ]; then items+=("padrao" "não passar (padrão do llama-server)")
+                if [ -z "$o" ]; then items+=("default" "do not pass (llama-server default)")
                 else items+=("$o" "$flag $o"); fi
             done
             set +f
             IFS="$old_ifs"
-            [ -n "$cur" ] && def="$cur" || def="padrao"
+            [ -n "$cur" ] && def="$cur" || def="default"
             while true; do
                 d --title "$label" --help-button --default-item "$def" --menu \
-                  "$header\n\nEscolha com as setas e confirme com Enter.\n<Ajuda> mostra a explicação completa." \
+                  "$header\n\nPick with the arrows and confirm with Enter.\n<Help> shows the full explanation." \
                   $((10 + ${#items[@]} / 2 + 6)) "$w" $((${#items[@]} / 2)) "${items[@]}"
                 rc=$?
                 [ $rc -eq 2 ] && { show_param_doc "$idx"; continue; }
                 [ $rc -ne 0 ] && return
-                new="$REPLY"; [ "$new" = "padrao" ] && new=""
+                new="$REPLY"; [ "$new" = "default" ] && new=""
                 break
             done ;;
         *)
             new="$cur"
             while true; do
                 d --title "$label" --help-button --inputbox \
-                  "$header\n\nDigite o novo valor e tecle Enter.\nDeixe VAZIO para não passar o parâmetro (usa o padrão do llama-server).\n<Ajuda> mostra a explicação completa." \
+                  "$header\n\nType the new value and press Enter.\nLeave EMPTY to not pass the parameter (llama-server default).\n<Help> shows the full explanation." \
                   16 "$w" "$new"
                 rc=$?
                 [ $rc -eq 2 ] && { show_param_doc "$idx"; continue; }
@@ -980,22 +979,22 @@ edit_param() {  # índice do parâmetro em P_KEYS
                 new="${new/#\~/$HOME}"
                 case "$type" in
                     int)   if [ -n "$new" ] && ! [[ "$new" =~ ^-?[0-9]+$ ]]; then
-                               msg "Valor inválido" "'$label' aceita apenas números inteiros.\n\nValor digitado: '$new'"; continue; fi ;;
+                               msg "Invalid value" "'$label' only accepts whole numbers.\n\nYou typed: '$new'"; continue; fi ;;
                     float) if [ -n "$new" ] && ! [[ "$new" =~ ^[0-9]*\.?[0-9]+$ ]]; then
-                               msg "Valor inválido" "'$label' aceita números como 0.7 (use ponto, não vírgula).\n\nValor digitado: '$new'"; continue; fi ;;
+                               msg "Invalid value" "'$label' accepts numbers like 0.7 (use a dot, not a comma).\n\nYou typed: '$new'"; continue; fi ;;
                 esac
                 if [ "$key" = "PORT" ] && [ -n "$new" ] && { [ "$new" -lt 1 ] || [ "$new" -gt 65535 ]; }; then
-                    msg "Valor inválido" "A porta deve estar entre 1 e 65535.\n\nValor digitado: '$new'"; continue
+                    msg "Invalid value" "The port must be between 1 and 65535.\n\nYou typed: '$new'"; continue
                 fi
                 if [ "$key" = "MMPROJ" ] && [ -n "$new" ] && [ ! -f "$new" ]; then
-                    msg "Arquivo não encontrado" "Não existe arquivo em:\n\n$new"; continue
+                    msg "File not found" "No file exists at:\n\n$new"; continue
                 fi
                 break
             done ;;
     esac
 
     eval "$key=\$new"
-    log_info "Parâmetro $key alterado: '$([ "$key" = APIKEY ] && echo '***' || echo "$cur")' -> '$([ "$key" = APIKEY ] && echo '***' || echo "$new")'"
+    log_info "Parameter $key changed: '$([ "$key" = APIKEY ] && echo '***' || echo "$cur")' -> '$([ "$key" = APIKEY ] && echo '***' || echo "$new")'"
 }
 
 menu_params() {
@@ -1005,47 +1004,47 @@ menu_params() {
         for n in "${!P_KEYS[@]}"; do
             items+=("${tags:$n:1}" "$(pad "${P_LABEL[$n]}" 24) $(display_value "$n")" "${P_FLAG[$n]:+${P_FLAG[$n]}: }${P_SHORT[$n]}")
         done
-        items+=("0" "Restaurar valores padrão" "Volta todos os parâmetros aos valores iniciais (mantém o modelo)")
-        items+=("?" "Ajuda de todos os parâmetros" "Mostra a explicação completa de cada parâmetro")
+        items+=("0" "Restore defaults" "Resets every parameter to its initial value (keeps the model)")
+        items+=("?" "Help for all parameters" "Shows the full explanation of every parameter")
         term_size
         lw=$((TL - 12)); [ "$lw" -gt $(( ${#items[@]} / 3 )) ] && lw=$(( ${#items[@]} / 3 ))
-        d --title "Parâmetros do servidor" --item-help --cancel-label "Voltar" --default-item "$sel" --menu \
-          "Tecle a letra ou use as setas + Enter para editar. A descrição aparece no rodapé.\n(padrão) = não é passado; o llama-server usa o valor dele." \
+        d --title "Server parameters" --item-help --cancel-label "Back" --default-item "$sel" --menu \
+          "Press the letter, or use the arrows + Enter, to edit. The description is shown at the bottom.\n(default) = not passed; llama-server uses its own value." \
           $((lw + 8)) $((TC - 6)) "$lw" "${items[@]}" || return
         sel="$REPLY"
         case "$REPLY" in
-            0) if ask "Restaurar" "Voltar todos os parâmetros aos valores padrão?\n(O modelo selecionado é mantido.)"; then
-                   local m="$MODEL"; reset_params; MODEL="$m"; log_info "Parâmetros restaurados ao padrão"
+            0) if ask "Restore defaults" "Reset every parameter to its default value?\n(The selected model is kept.)"; then
+                   local m="$MODEL"; reset_params; MODEL="$m"; log_info "Parameters restored to defaults"
                fi ;;
             \?) local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/llama-tui.XXXXXX")"
                for n in "${!P_KEYS[@]}"; do
-                   printf '=== %s  (%s) ===\n%s\n\n' "${P_LABEL[$n]}" "${P_FLAG[$n]:-livre}" "${P_DOC[$n]}"
+                   printf '=== %s  (%s) ===\n%s\n\n' "${P_LABEL[$n]}" "${P_FLAG[$n]:-free-form}" "${P_DOC[$n]}"
                done >"$tmp"
-               term_size; d --title "Ajuda dos parâmetros" --textbox "$tmp" $((TL - 4)) $((TC - 6)); rm -f "$tmp" ;;
+               term_size; d --title "Parameter help" --textbox "$tmp" $((TL - 4)) $((TC - 6)); rm -f "$tmp" ;;
             [a-z]) n="${tags%%"$REPLY"*}"; edit_param "${#n}" ;;
         esac
     done
 }
 
-# ---------------- Perfis ----------------
+# ---------------- Profiles ----------------
 menu_load_profile() {
     local items=() p m
     for p in $(list_profiles); do
         m="$(sed -n 's/^MODEL=//p' "$PROFILE_DIR/$p.conf" | head -n 1)"
         items+=("$p" "$(basename "$m")")
     done
-    [ ${#items[@]} -eq 0 ] && { msg "Perfis" "Nenhum perfil salvo ainda.\n\nConfigure modelo e parâmetros e use 'Salvar perfil'."; return; }
+    [ ${#items[@]} -eq 0 ] && { msg "Profiles" "No saved profiles yet.\n\nSet up a model and parameters, then use 'Save current settings as a profile'."; return; }
     term_size
-    d --title "Carregar perfil" --extra-button --extra-label "Excluir" --cancel-label "Voltar" --menu \
-      "Perfis salvos em:\n$PROFILE_DIR\n\nOK carrega o perfil; 'Excluir' apaga o arquivo do perfil." \
+    d --title "Load profile" --extra-button --extra-label "Delete" --cancel-label "Back" --menu \
+      "Profiles saved in:\n$PROFILE_DIR\n\nOK loads the profile; 'Delete' removes the profile file." \
       $((TL - 4)) $((TC - 6)) $((TL - 12)) "${items[@]}"
     case $? in
         0) if load_profile "$REPLY"; then
-               msg "Perfil carregado" "Perfil '\\Zb$REPLY\\Zn' carregado.\n\nModelo: $(model_label)\n\nDica: execute direto pelo terminal com:\n  $PROG run $REPLY"
-           else msg "Erro" "Não foi possível carregar o perfil '$REPLY'. Veja o log:\n$APP_LOG"; fi ;;
+               msg "Profile loaded" "Profile '\\Zb$REPLY\\Zn' loaded.\n\nModel: $(model_label)\n\nTip: run it straight from the terminal with:\n  $PROG run $REPLY"
+           else msg "Error" "Could not load profile '$REPLY'. See the log:\n$APP_LOG"; fi ;;
         3) local victim="$REPLY"
-           if ask "Excluir perfil" "Excluir definitivamente o perfil '$victim'?\n\n$PROFILE_DIR/$victim.conf"; then
-               rm -f "$PROFILE_DIR/$victim.conf" && log_info "Perfil excluído: $victim"
+           if ask "Delete profile" "Permanently delete profile '$victim'?\n\n$PROFILE_DIR/$victim.conf"; then
+               rm -f "$PROFILE_DIR/$victim.conf" && log_info "Profile deleted: $victim"
                [ "$CURRENT_PROFILE" = "$victim" ] && CURRENT_PROFILE=""
            fi ;;
     esac
@@ -1054,100 +1053,100 @@ menu_load_profile() {
 menu_save_profile() {
     local def="$CURRENT_PROFILE" name
     [ -z "$def" ] && [ -n "$MODEL" ] && def="$(printf %s "$(basename "$MODEL" .gguf)" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-40)"
-    d --title "Salvar perfil" --inputbox "Nome do perfil (letras, números, ponto, - e _).\nSe já existir, será sobrescrito." 10 60 "$def" || return
+    d --title "Save profile" --inputbox "Profile name (letters, digits, dot, - and _).\nIf it already exists, it will be overwritten." 10 60 "$def" || return
     name="$REPLY"
-    if ! [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then msg "Nome inválido" "Use apenas letras, números, ponto, hífen e sublinhado.\nDigitado: '$name'"; return; fi
+    if ! [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then msg "Invalid name" "Use only letters, digits, dot, hyphen and underscore.\nYou typed: '$name'"; return; fi
     if [ -f "$PROFILE_DIR/$name.conf" ] && [ "$name" != "$CURRENT_PROFILE" ]; then
-        ask "Sobrescrever?" "Já existe um perfil chamado '$name'. Sobrescrever?" || return
+        ask "Overwrite?" "A profile named '$name' already exists. Overwrite it?" || return
     fi
-    if save_kv_file "$PROFILE_DIR/$name.conf" "$PROFILE_KEYS" "Perfil llama-tui: $name"; then
+    if save_kv_file "$PROFILE_DIR/$name.conf" "$PROFILE_KEYS" "llama-tui profile: $name"; then
         CURRENT_PROFILE="$name"
-        msg "Perfil salvo" "Perfil '\\Zb$name\\Zn' salvo em:\n$PROFILE_DIR/$name.conf\n\nPara rodar sem abrir a TUI:\n  $PROG run $name      (primeiro plano)\n  $PROG start $name    (segundo plano)\n  $PROG stop"
+        msg "Profile saved" "Profile '\\Zb$name\\Zn' saved to:\n$PROFILE_DIR/$name.conf\n\nTo run it without opening the TUI:\n  $PROG run $name      (foreground)\n  $PROG start $name    (background)\n  $PROG stop"
     else
-        msg "Erro" "Falha ao salvar o perfil. Veja o log:\n$APP_LOG"
+        msg "Error" "Failed to save the profile. See the log:\n$APP_LOG"
     fi
 }
 
-# ---------------- Servidor ----------------
+# ---------------- Server ----------------
 show_command() {
     build_cmd
-    local warn=""; validate_config || warn="\n\n\\Z1Problemas encontrados:\\Zn\n$VALIDATION_ERRORS"
-    [ -n "$VALIDATION_WARNINGS" ] && warn="$warn\n\\Z3Avisos:\\Zn\n$VALIDATION_WARNINGS"
-    msg "Comando gerado" "Este é o comando que será executado (pode copiar e usar no terminal):\n\n$(mask_cmd "$(quote_cmd "${CMD[@]}")")$warn"
+    local warn=""; validate_config || warn="\n\n\\Z1Problems found:\\Zn\n$VALIDATION_ERRORS"
+    [ -n "$VALIDATION_WARNINGS" ] && warn="$warn\n\\Z3Warnings:\\Zn\n$VALIDATION_WARNINGS"
+    msg "Generated command" "This is the command that will run (you can copy it and use it in a terminal):\n\n$(mask_cmd "$(quote_cmd "${CMD[@]}")")$warn"
 }
 
 tui_start() {
     local pid
     if pid="$(server_pid)"; then
-        msg "Já em execução" "Já existe um servidor rodando (PID $pid).\n\nPare-o primeiro em 'Parar servidor' para iniciar outro modelo."
+        msg "Already running" "A server is already running (PID $pid).\n\nStop it first with 'Stop server' to start another model."
         return
     fi
     if ! validate_config; then
-        msg "Não é possível iniciar" "Corrija os itens abaixo antes de iniciar:\n\n$VALIDATION_ERRORS"
+        msg "Cannot start" "Fix the items below before starting:\n\n$VALIDATION_ERRORS"
         return
     fi
     if [ -n "$VALIDATION_WARNINGS" ]; then
-        ask "Avisos" "Atenção:\n\n$VALIDATION_WARNINGS\nDeseja iniciar mesmo assim?" || return
+        ask "Warnings" "Attention:\n\n$VALIDATION_WARNINGS\nStart anyway?" || return
     fi
     save_last
     build_cmd
-    ask "Iniciar servidor" "Modelo: \\Zb$(model_label)\\Zn\nEndereço: http://$(primary_ip):${PORT:-8080}\n\nComando:\n$(mask_cmd "$(quote_cmd "${CMD[@]}")")\n\nIniciar agora?" || return
+    ask "Start server" "Model: \\Zb$(model_label)\\Zn\nAddress: http://$(primary_ip):${PORT:-8080}\n\nCommand:\n$(mask_cmd "$(quote_cmd "${CMD[@]}")")\n\nStart now?" || return
 
     start_server_bg
     if [ $? -ne 0 ]; then
-        msg "Falha ao iniciar" "O llama-server encerrou logo após iniciar.\n\nÚltimas linhas do log:\n\n$(tail -n 15 "$SERVER_LOG")\n\nLog completo:\n$SERVER_LOG"
+        msg "Failed to start" "llama-server exited right after starting.\n\nLast log lines:\n\n$(tail -n 15 "$SERVER_LOG")\n\nFull log:\n$SERVER_LOG"
         return
     fi
     pid="$(cat "$PID_FILE")"
 
-    # Aguarda carregar mostrando o progresso; Ctrl+C interrompe apenas a espera
+    # Wait for loading while showing progress; Ctrl+C only stops the waiting
     local t=0 st="" aborted=0
     trap 'aborted=1' INT
     while [ "$t" -lt "$STARTUP_TIMEOUT" ] && [ $aborted -eq 0 ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
             trap - INT; rm -f "$PID_FILE"
-            log_error "Servidor morreu durante o carregamento (pid=$pid)"
-            msg "O servidor encerrou com erro" "O llama-server parou durante o carregamento.\n\nCausas comuns: memória insuficiente (reduza Contexto ou Camadas na GPU), arquivo corrompido, parâmetro não suportado pela sua versão.\n\nÚltimas linhas:\n\n$(tail -n 15 "$SERVER_LOG")\n\nLog completo: $SERVER_LOG"
+            log_error "Server died while loading (pid=$pid)"
+            msg "The server exited with an error" "llama-server stopped while loading.\n\nCommon causes: not enough memory (lower Context or GPU layers), a corrupted file, a parameter your version does not support.\n\nLast lines:\n\n$(tail -n 15 "$SERVER_LOG")\n\nFull log: $SERVER_LOG"
             return
         fi
         st="$(health_status "${PORT:-8080}")"
         [ "$st" = "ok" ] && break
         term_size
-        dialog --backtitle "$BACKTITLE" --cr-wrap --no-collapse --title "Carregando modelo... ${t}s (Ctrl+C para parar de esperar)" \
+        dialog --backtitle "$BACKTITLE" --cr-wrap --no-collapse --title "Loading model... ${t}s (Ctrl+C to stop waiting)" \
                --infobox "$(tail -n $((TL - 8)) "$SERVER_LOG" | cut -c1-$((TC - 10)))" $((TL - 4)) $((TC - 6))
         sleep 2; t=$((t + 2))
     done
     trap - INT
     if [ "$st" = "ok" ]; then
-        log_info "Servidor pronto em ${t}s"
-        msg "Servidor pronto!" "\\Z2\\ZbO servidor está no ar\\Zn (PID $pid, carregou em ${t}s).\n\nAcesse pelo navegador ou use como API OpenAI (/v1):\n$(access_urls "${PORT:-8080}")\n\nUse 'Ver saída do servidor' para acompanhar as requisições.\nLog: $SERVER_LOG"
+        log_info "Server ready in ${t}s"
+        msg "Server ready!" "\\Z2\\ZbThe server is up\\Zn (PID $pid, loaded in ${t}s).\n\nOpen it in a browser or use it as an OpenAI API (/v1):\n$(access_urls "${PORT:-8080}")\n\nUse 'View server output' to follow requests.\nLog: $SERVER_LOG"
     else
-        log_warn "Servidor ainda carregando após ${t}s (espera encerrada)"
-        msg "Ainda carregando" "O servidor continua carregando em segundo plano (PID $pid).\nAcompanhe em 'Ver saída do servidor'."
+        log_warn "Server still loading after ${t}s (stopped waiting)"
+        msg "Still loading" "The server is still loading in the background (PID $pid).\nFollow it in 'View server output'."
     fi
 }
 
 tui_stop() {
     local pid
-    pid="$(server_pid)" || { msg "Parar servidor" "Nenhum servidor em execução."; return; }
-    ask "Parar servidor" "Parar o servidor (PID $pid)?\n\nModelo: $(basename "$(runinfo_get MODEL)")\n\nClientes conectados serão desconectados." || return
-    info "Parando o servidor (PID $pid)..."
+    pid="$(server_pid)" || { msg "Stop server" "No server is running."; return; }
+    ask "Stop server" "Stop the server (PID $pid)?\n\nModel: $(basename "$(runinfo_get MODEL)")\n\nConnected clients will be disconnected." || return
+    info "Stopping the server (PID $pid)..."
     if stop_server; then
-        msg "Servidor parado" "Servidor encerrado.\n\nAgora você pode escolher outro modelo/parâmetros e iniciar novamente."
+        msg "Server stopped" "The server has been shut down.\n\nYou can now pick another model/parameters and start again."
     else
-        msg "Erro" "Não foi possível parar o processo $pid.\nTente manualmente: kill -9 $pid\n\nLog: $APP_LOG"
+        msg "Error" "Could not stop process $pid.\nTry manually: kill -9 $pid\n\nLog: $APP_LOG"
     fi
 }
 
 tui_view_output() {
     local l; l="$(last_server_log)"
-    [ -n "$l" ] || { msg "Saída do servidor" "Nenhum log de servidor ainda. Inicie o servidor primeiro."; return; }
+    [ -n "$l" ] || { msg "Server output" "No server log yet. Start the server first."; return; }
     term_size
     if server_pid >/dev/null; then
-        d --title "Saída ao vivo: $(basename "$l")  (Enter/Esc para voltar - o servidor continua)" \
-          --exit-label "Voltar" --tailbox "$l" $((TL - 3)) $((TC - 4))
+        d --title "Live output: $(basename "$l")  (Enter/Esc to go back - the server keeps running)" \
+          --exit-label "Back" --tailbox "$l" $((TL - 3)) $((TC - 4))
     else
-        d --title "Último log (servidor parado): $(basename "$l")" --exit-label "Voltar" --textbox "$l" $((TL - 3)) $((TC - 4))
+        d --title "Last log (server stopped): $(basename "$l")" --exit-label "Back" --textbox "$l" $((TL - 3)) $((TC - 4))
     fi
 }
 
@@ -1155,53 +1154,53 @@ tui_status() {
     local pid txt
     if pid="$(server_pid)"; then
         local p; p="$(runinfo_get PORT)"
-        txt="\\Z2\\ZbRODANDO\\Zn - estado: $(health_status "$p")\n\nPID    : $pid\nDesde  : $(runinfo_get STARTED)\nPerfil : $(runinfo_get PROFILE)\nModelo : $(runinfo_get MODEL)\nLog    : $(runinfo_get LOG)\n\nEndereços de acesso:\n$(access_urls "$p")\n\nAPI OpenAI: acrescente /v1 ao endereço (ex.: http://IP:$p/v1)"
+        txt="\\Z2\\ZbRUNNING\\Zn - state: $(health_status "$p")\n\nPID     : $pid\nSince   : $(runinfo_get STARTED)\nProfile : $(runinfo_get PROFILE)\nModel   : $(runinfo_get MODEL)\nLog     : $(runinfo_get LOG)\n\nAccess addresses:\n$(access_urls "$p")\n\nOpenAI API: append /v1 to the address (e.g. http://IP:$p/v1)"
     else
-        txt="\\Z1Nenhum servidor em execução.\\Zn"
+        txt="\\Z1No server is running.\\Zn"
     fi
-    txt="$txt\n\nllama-server: $(find_llama_bin || echo 'NÃO ENCONTRADO')\nCPUs: $(cpu_count)   Sistema: $(uname -sm)"
+    txt="$txt\n\nllama-server: $(find_llama_bin || echo 'NOT FOUND')\nCPUs: $(cpu_count)   System: $(uname -sm)"
     msg "Status" "$txt"
 }
 
 tui_logs() {
     term_size
-    d --title "Logs" --cancel-label "Voltar" --menu "Logs ficam em:\n$LOG_DIR\n\nNenhum log é sobrescrito: cada execução do servidor gera um arquivo novo." \
+    d --title "Logs" --cancel-label "Back" --menu "Logs are stored in:\n$LOG_DIR\n\nNo log is ever overwritten: every server run creates a new file." \
       $((TL - 4)) $((TC - 6)) 4 \
-      1 "Log do programa (llama-tui.log) - últimas 500 linhas" \
-      2 "Escolher um log de execução do servidor" || return
+      1 "Program log (llama-tui.log) - last 500 lines" \
+      2 "Choose a server run log" || return
     case "$REPLY" in
         1) local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/llama-tui.XXXXXX")"; tail -n 500 "$APP_LOG" >"$tmp"
-           d --title "llama-tui.log" --exit-label "Voltar" --textbox "$tmp" $((TL - 3)) $((TC - 4)); rm -f "$tmp" ;;
+           d --title "llama-tui.log" --exit-label "Back" --textbox "$tmp" $((TL - 3)) $((TC - 4)); rm -f "$tmp" ;;
         2) local items=() f
            for f in $(ls -1t "$LOG_DIR"/server-*.log 2>/dev/null | head -n 40); do
                items+=("$(basename "$f")" "$(human_size "$(file_size "$f")")")
            done
-           [ ${#items[@]} -eq 0 ] && { msg "Logs" "Nenhum log de servidor ainda."; return; }
-           d --title "Logs do servidor (mais recentes primeiro)" --menu "Escolha:" $((TL - 4)) $((TC - 6)) $((TL - 10)) "${items[@]}" || return
-           d --title "$REPLY" --exit-label "Voltar" --textbox "$LOG_DIR/$REPLY" $((TL - 3)) $((TC - 4)) ;;
+           [ ${#items[@]} -eq 0 ] && { msg "Logs" "No server logs yet."; return; }
+           d --title "Server logs (newest first)" --menu "Choose:" $((TL - 4)) $((TC - 6)) $((TL - 10)) "${items[@]}" || return
+           d --title "$REPLY" --exit-label "Back" --textbox "$LOG_DIR/$REPLY" $((TL - 3)) $((TC - 4)) ;;
     esac
 }
 
 tui_settings() {
     while true; do
         term_size
-        d --title "Configurações" --cancel-label "Voltar" --menu "Configurações gerais (salvas em $SETTINGS_FILE)" \
+        d --title "Settings" --cancel-label "Back" --menu "General settings (saved in $SETTINGS_FILE)" \
           $((TL - 4)) $((TC - 6)) 4 \
-          1 "Caminho do llama-server: $(find_llama_bin || echo 'NÃO ENCONTRADO')" \
-          2 "Pastas de busca de modelos" \
-          3 "Tempo máximo de espera no carregamento: ${STARTUP_TIMEOUT}s" || return
+          1 "llama-server path: $(find_llama_bin || echo 'NOT FOUND')" \
+          2 "Model search folders" \
+          3 "Maximum wait while loading: ${STARTUP_TIMEOUT}s" || return
         case "$REPLY" in
-            1) d --title "llama-server" --inputbox "Caminho completo do executável llama-server.\nDeixe vazio para detectar automaticamente (PATH e locais comuns).\n\nEx.: ~/llama.cpp/build/bin/llama-server" 12 $((TC - 10)) "$LLAMA_BIN" || continue
+            1) d --title "llama-server" --inputbox "Full path to the llama-server executable.\nLeave empty to detect it automatically (PATH and common locations).\n\nE.g. ~/llama.cpp/build/bin/llama-server" 12 $((TC - 10)) "$LLAMA_BIN" || continue
                local b="${REPLY/#\~/$HOME}"
-               if [ -n "$b" ] && [ ! -x "$b" ]; then msg "Inválido" "Não é um executável:\n$b"; continue; fi
+               if [ -n "$b" ] && [ ! -x "$b" ]; then msg "Invalid" "Not an executable:\n$b"; continue; fi
                LLAMA_BIN="$b"; LLAMA_HELP_CACHE=""; save_settings
                local bin; if bin="$(find_llama_bin)"; then
-                   msg "llama-server" "Usando: $bin\n\nVersão:\n$("$bin" --version 2>&1 | head -n 4)"
+                   msg "llama-server" "Using: $bin\n\nVersion:\n$("$bin" --version 2>&1 | head -n 4)"
                fi ;;
-            2) d --title "Pastas de busca" --inputbox "Pastas separadas por ':'" 9 $((TC - 10)) "$MODEL_DIRS" || continue
+            2) d --title "Search folders" --inputbox "Folders separated by ':'" 9 $((TC - 10)) "$MODEL_DIRS" || continue
                MODEL_DIRS="$REPLY"; save_settings ;;
-            3) d --title "Tempo de espera" --inputbox "Segundos para aguardar o modelo carregar antes de devolver o controle.\n(O servidor continua carregando mesmo depois.)" 10 60 "$STARTUP_TIMEOUT" || continue
-               [[ "$REPLY" =~ ^[0-9]+$ ]] && { STARTUP_TIMEOUT="$REPLY"; save_settings; } || msg "Inválido" "Digite apenas números." ;;
+            3) d --title "Wait time" --inputbox "Seconds to wait for the model to load before returning control.\n(The server keeps loading even after that.)" 10 60 "$STARTUP_TIMEOUT" || continue
+               [[ "$REPLY" =~ ^[0-9]+$ ]] && { STARTUP_TIMEOUT="$REPLY"; save_settings; } || msg "Invalid" "Type digits only." ;;
         esac
     done
 }
@@ -1210,11 +1209,11 @@ tui_quit() {
     local pid
     save_last
     if pid="$(server_pid)"; then
-        d --title "Sair" --yes-label "Parar e sair" --no-label "Deixar rodando" --extra-button --extra-label "Cancelar" --yesno \
-"O servidor ainda está rodando (PID $pid).\n\n - Parar e sair: encerra o servidor.\n - Deixar rodando: sai e o servidor continua em segundo plano\n   (pare depois com: $PROG stop)" 13 70
+        d --title "Quit" --yes-label "Stop and quit" --no-label "Keep running" --extra-button --extra-label "Cancel" --yesno \
+"The server is still running (PID $pid).\n\n - Stop and quit: shuts the server down.\n - Keep running: quits and the server keeps running in the background\n   (stop it later with: $PROG stop)" 13 74
         case $? in
-            0) info "Parando o servidor..."; stop_server ;;
-            1) log_info "Saindo e mantendo servidor ativo (pid=$pid)" ;;
+            0) info "Stopping the server..."; stop_server ;;
+            1) log_info "Quitting and keeping the server running (pid=$pid)" ;;
             *) return 1 ;;
         esac
     fi
@@ -1223,45 +1222,45 @@ tui_quit() {
 
 tui_main() {
     if ! command -v dialog >/dev/null 2>&1; then
-        echo "A interface TUI precisa do programa 'dialog'. Instale com:" >&2
+        echo "The TUI needs the 'dialog' program. Install it with:" >&2
         echo "  macOS : brew install dialog" >&2
         echo "  Debian/Ubuntu: sudo apt install dialog" >&2
         echo "  Fedora: sudo dnf install dialog   |  Arch: sudo pacman -S dialog" >&2
-        echo "Os comandos de linha (run/start/stop/...) funcionam sem ele. Veja: $PROG help" >&2
-        log_error "dialog não encontrado"
+        echo "The command-line commands (run/start/stop/...) work without it. See: $PROG help" >&2
+        log_error "dialog not found"
         exit 1
     fi
-    [ -t 0 ] && [ -t 1 ] || { echo "A TUI precisa de um terminal interativo." >&2; exit 1; }
-    export ESCDELAY="${ESCDELAY:-250}"   # Esc responde rápido (padrão do ncurses: 1s)
-    log_info "TUI iniciada (bash $BASH_VERSION, $(uname -sm), dialog $(dialog --version 2>&1 | head -n1), llama-server: $(find_llama_bin || echo 'não encontrado'))"
-    trap 'clear; log_info "TUI encerrada"' EXIT
-    trap 'log_warn "Recebido sinal de término"; exit 130' TERM HUP
+    [ -t 0 ] && [ -t 1 ] || { echo "The TUI needs an interactive terminal." >&2; exit 1; }
+    export ESCDELAY="${ESCDELAY:-250}"   # snappy Esc key (ncurses default: 1s)
+    log_info "TUI started (bash $BASH_VERSION, $(uname -sm), dialog $(dialog --version 2>&1 | head -n1), llama-server: $(find_llama_bin || echo 'not found'))"
+    trap 'clear; log_info "TUI closed"' EXIT
+    trap 'log_warn "Received termination signal"; exit 130' TERM HUP
 
     [ -f "$LAST_FILE" ] && load_kv_file "$LAST_FILE" "$PROFILE_KEYS"
 
     if ! find_llama_bin >/dev/null; then
-        msg "llama-server não encontrado" "Não encontrei o executável 'llama-server' no PATH nem em locais comuns.\n\nInforme o caminho em 'Configurações' antes de iniciar o servidor.\n\n(Compile o llama.cpp ou instale com: brew install llama.cpp)"
+        msg "llama-server not found" "Could not find the 'llama-server' executable on your PATH or in common locations.\n\nSet its path in 'Settings' before starting the server.\n\n(Build llama.cpp or install it with: brew install llama.cpp)"
     fi
 
     local sel=1
     while true; do
         term_size
-        d --title "llama-server - painel${CURRENT_PROFILE:+ (perfil: $CURRENT_PROFILE)}" --cancel-label "Sair" --default-item "$sel" --menu \
-"$(status_line)\nModelo: \\Zb$(model_label)\\Zn\nIP desta máquina: \\Zb$(primary_ip)\\Zn   Porta: ${PORT:-8080}   Contexto: ${CTX:-padrão}   GPU layers: ${NGL:-padrão}" \
+        d --title "llama-server - dashboard${CURRENT_PROFILE:+ (profile: $CURRENT_PROFILE)}" --cancel-label "Quit" --default-item "$sel" --menu \
+"$(status_line)\nModel: \\Zb$(model_label)\\Zn\nThis machine's IP: \\Zb$(primary_ip)\\Zn   Port: ${PORT:-8080}   Context: ${CTX:-default}   GPU layers: ${NGL:-default}" \
           $((TL - 4)) $((TC - 6)) 12 \
-          1  "Selecionar modelo (.gguf)" \
-          2  "Configurar parâmetros" \
-          3  "Carregar perfil salvo" \
-          4  "Salvar configuração atual como perfil" \
-          5  "Ver comando gerado" \
-          6  ">> INICIAR servidor" \
-          7  "Ver saída do servidor (ao vivo)" \
-          8  "[] PARAR servidor" \
-          9  "Status e endereços de acesso remoto" \
+          1  "Select model (.gguf)" \
+          2  "Configure parameters" \
+          3  "Load saved profile" \
+          4  "Save current settings as a profile" \
+          5  "View generated command" \
+          6  ">> START server" \
+          7  "View server output (live)" \
+          8  "[] STOP server" \
+          9  "Status and remote access addresses" \
           L  "Logs" \
-          C  "Configurações (caminho do llama-server, pastas)" \
-          S  "Sair"
-        [ $? -ne 0 ] && REPLY=S
+          S  "Settings (llama-server path, folders)" \
+          Q  "Quit"
+        [ $? -ne 0 ] && REPLY=Q
         sel="$REPLY"
         case "$REPLY" in
             1) menu_model; save_last ;;
@@ -1274,8 +1273,8 @@ tui_main() {
             8) tui_stop ;;
             9) tui_status ;;
             L) tui_logs ;;
-            C) tui_settings ;;
-            S) tui_quit && break ;;
+            S) tui_settings ;;
+            Q) tui_quit && break ;;
         esac
     done
 }

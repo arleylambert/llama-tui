@@ -1,21 +1,22 @@
-# Contribuindo
+# Contributing
 
-Sugestões e correções são bem-vindas! Abra uma *issue* descrevendo o problema ou a ideia antes de enviar mudanças grandes.
+Suggestions and fixes are welcome! Please open an *issue* describing the problem or idea before sending large changes.
 
-## Ao relatar um problema
+## Reporting a problem
 
-Inclua:
-- Sistema operacional e versão (`uname -a`)
-- Versão do bash (`bash --version`) e do dialog (`dialog --version`)
-- Versão do llama.cpp (`llama-server --version`)
-- As linhas relevantes de `~/.local/state/llama-tui/logs/llama-tui.log` e do log do servidor (`llama-tui logs`)
+Please include:
+- Operating system and version (`uname -a`)
+- bash version (`bash --version`) and dialog version (`dialog --version`)
+- llama.cpp version (`llama-server --version`)
+- The relevant lines from `~/.local/state/llama-tui/logs/llama-tui.log` and from the server log (`llama-tui logs`)
 
-Revise os logs antes de colar e remova caminhos ou informações pessoais que não queira expor.
+Review the logs before pasting and remove any paths or personal details you don't want to share.
 
-## Ao alterar o código
+## Changing the code
 
-- Mantenha compatibilidade com **bash 3.2** (o do macOS): nada de arrays associativos (`declare -A`), `mapfile`, `${var,,}` ou `local -n`
-- Rode `bash -n llama-tui.sh` e, se possível, [`shellcheck`](https://www.shellcheck.net/) `llama-tui.sh`
-- Teste no macOS e no Linux quando puder
-- Novos parâmetros do servidor são declarados com `defparam` (chave, tipo, flag, rótulo, ajuda curta, documentação); a TUI, a validação, os perfis e o comando se ajustam sozinhos
-- Registre a mudança no [CHANGELOG.md](CHANGELOG.md)
+- Keep compatibility with **bash 3.2** (the one on macOS): no associative arrays (`declare -A`), `mapfile`, `${var,,}` or `local -n`
+- Inside one `local` statement, don't reference a variable declared earlier in that same statement (bash expands every word first); split it into two `local` lines
+- Run `bash -n llama-tui.sh` and, if possible, [`shellcheck`](https://www.shellcheck.net/) `llama-tui.sh`
+- Test on macOS and Linux when you can
+- New server parameters are declared with `defparam` (key, type, flag, label, short help, documentation); the TUI, validation, profiles and command adapt automatically
+- Record the change in [CHANGELOG.md](CHANGELOG.md)

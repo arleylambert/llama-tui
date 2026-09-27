@@ -12,7 +12,7 @@
 #  Compatível com bash 3.2 (macOS) e Linux. A TUI requer "dialog".
 # =============================================================================
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 PROG="$(basename "$0")"
 
 # ----------------------------------------------------------------------------
@@ -1232,6 +1232,7 @@ tui_main() {
         exit 1
     fi
     [ -t 0 ] && [ -t 1 ] || { echo "A TUI precisa de um terminal interativo." >&2; exit 1; }
+    export ESCDELAY="${ESCDELAY:-250}"   # Esc responde rápido (padrão do ncurses: 1s)
     log_info "TUI iniciada (bash $BASH_VERSION, $(uname -sm), dialog $(dialog --version 2>&1 | head -n1), llama-server: $(find_llama_bin || echo 'não encontrado'))"
     trap 'clear; log_info "TUI encerrada"' EXIT
     trap 'log_warn "Recebido sinal de término"; exit 130' TERM HUP

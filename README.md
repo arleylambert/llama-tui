@@ -93,7 +93,7 @@ Na próxima vez que abrir, a última configuração usada é restaurada.
 
 Navegação: **setas** ou **Tab** para mover, **Enter** para confirmar, **Esc** para voltar. Nas listas de opções, **Espaço** marca o item.
 
-O topo do painel mostra se o servidor está rodando, o modelo selecionado, o endereço, o contexto e as camadas na GPU.
+O topo do painel mostra se o servidor está rodando, o modelo selecionado, o IPv4 desta máquina, a porta, o contexto e as camadas na GPU.
 
 | Opção | O que faz |
 |---|---|
@@ -111,7 +111,7 @@ O topo do painel mostra se o servidor está rodando, o modelo selecionado, o end
 
 **Busca de modelos.** As pastas padrão são `~/models`, `~/llama.cpp/models`, `~/.cache/llama.cpp`, `~/.cache/huggingface/hub` e `~/.lmstudio/models`. A busca é recursiva e segue links simbólicos. Arquivos `mmproj-*` e as partes 2 em diante de modelos divididos (`-00002-of-00003.gguf`) são ocultados; basta escolher a primeira parte.
 
-**Validação antes de iniciar.** O programa verifica se o `llama-server` existe, se o modelo existe e pode ser lido, se os campos numéricos são válidos e se a porta está livre. Também avisa sobre combinações arriscadas, como host `0.0.0.0` sem API key.
+**Validação antes de iniciar.** O programa verifica se o `llama-server` existe, se o modelo existe e pode ser lido, se os campos numéricos são válidos e se a porta está livre. Também avisa sobre combinações arriscadas, como iniciar sem API key.
 
 **Ao sair com o servidor rodando**, você escolhe entre **parar e sair** ou **deixar rodando** em segundo plano. Nesse caso, pare depois com `llama-tui stop`.
 
@@ -119,9 +119,12 @@ O topo do painel mostra se o servidor está rodando, o modelo selecionado, o end
 
 **Campo vazio significa que o parâmetro não é passado** e o `llama-server` usa o padrão dele.
 
+Na lista, tecle a **letra** do parâmetro (a, b, c...) ou use as setas e Enter. Cada tela de edição mostra a flag, uma descrição curta e o valor atual; o botão **Ajuda** abre a explicação completa. Parâmetros liga/desliga e de múltipla escolha são escolhidos numa lista, sem digitar.
+
+> **O IP não é um parâmetro.** O servidor sempre escuta em todas as interfaces (`--host 0.0.0.0`), para permitir acesso remoto. O llama-tui detecta o **IPv4 desta máquina** e apenas o exibe no painel, no status e na tela de servidor pronto. Para consultá-lo pelo terminal: `llama-tui ip`.
+
 | Campo | Flag | Descrição |
 |---|---|---|
-| Host / interface | `--host` | `127.0.0.1` = só esta máquina; `0.0.0.0` = acessível pela rede. Padrão do llama-tui: `0.0.0.0` |
 | Porta | `--port` | Porta TCP. Padrão: `8080` |
 | Contexto (tokens) | `-c` | Tamanho da janela de contexto. Valores maiores usam bem mais memória. Padrão do llama-tui: `4096` |
 | Camadas na GPU | `-ngl` | `99` = tudo na GPU; `0` = só CPU. Diminua se faltar memória. Padrão do llama-tui: `99` |
@@ -157,7 +160,6 @@ Exemplo (veja também [`examples/qwen3-8b.conf`](examples/qwen3-8b.conf)):
 
 ```ini
 MODEL=/Users/voce/models/Qwen3-8B-Q4_K_M.gguf
-HOST=0.0.0.0
 PORT=8080
 CTX=16384
 NGL=99
@@ -191,6 +193,7 @@ llama-tui show  <perfil>    # mostra o comando que seria executado
 llama-tui logs              # últimas linhas do log do servidor
 llama-tui logs -f           # acompanha o log do servidor ao vivo
 llama-tui applog            # acompanha o log do próprio programa
+llama-tui ip                # mostra o IPv4 desta máquina
 llama-tui help              # ajuda
 ```
 
@@ -206,9 +209,10 @@ A TUI e a linha de comando compartilham o mesmo estado: um servidor iniciado com
 
 ## Acesso remoto
 
-1. Use **Host** `0.0.0.0`
-2. Defina uma **API Key**
-3. Inicie e veja os endereços na tela final ou em **Status** (ex.: `http://192.168.0.10:8080`)
+O servidor já fica acessível pela rede. O IPv4 desta máquina aparece no topo do painel (e em `llama-tui ip`).
+
+1. Defina uma **API Key**
+2. Inicie e veja os endereços na tela final ou em **Status** (ex.: `http://192.168.0.10:8080`)
 
 Pelo navegador de outro computador, acesse `http://<ip>:<porta>` para a interface web do llama.cpp.
 
